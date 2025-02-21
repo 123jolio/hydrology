@@ -79,8 +79,7 @@ def process_stl_file(file_obj, scale, offset, grid_res, bounds):
     yi = np.linspace(top, bottom, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
-    grid_z = np.clip(grid_z, 0, 500)  # Adjust clip range as needed
-    
+    grid_z = np.clip(grid_z, 0, 500)  # Adjust as needed
     dx = (right - left) / (grid_res - 1)
     dy = (top - bottom) / (grid_res - 1)
     transform = from_origin(left, top, dx, dy)
@@ -110,8 +109,6 @@ def compute_hydro_derivatives(grid_z, cell_size_m):
     grid.fill_depressions(data='dem', out_name='filled_dem')
     grid.flowdir(data='filled_dem', out_name='flow_dir')
     flow_acc = grid.accumulation(data='flow_dir')
-    
-    # Compute a simplified slope in radians for TWI
     slope_rad = np.radians(np.gradient(grid_z, cell_size_m)[0])
     twi = np.log((flow_acc * cell_size_m**2) / (np.tan(np.clip(slope_rad, 0.01, np.inf)) + 1e-9))
     return flow_acc, twi
@@ -119,7 +116,7 @@ def compute_hydro_derivatives(grid_z, cell_size_m):
 @st.cache_data
 def create_gif(data_array, frames=10, fps=2, title="Scenario"):
     """
-    Create an animated GIF using matplotlib.animation.
+    Create animated GIF using matplotlib.animation.
     Returns: bytes of the GIF.
     """
     fig, ax = plt.subplots(figsize=(4, 4))
@@ -127,12 +124,10 @@ def create_gif(data_array, frames=10, fps=2, title="Scenario"):
     ax.set_title(title)
     ax.axis('off')
     fig.colorbar(im, ax=ax, label="Value")
-    
     def update(frame):
         im.set_data(np.clip(data_array * (1 + 0.1 * frame), 0, data_array.max()))
         ax.set_title(f"{title} Frame {frame + 1}")
         return im,
-    
     ani = animation.FuncAnimation(fig, update, frames=frames, interval=1000/fps)
     buf = io.BytesIO()
     ani.save(buf, format='gif', writer='pillow', fps=fps)
@@ -143,7 +138,7 @@ def create_gif(data_array, frames=10, fps=2, title="Scenario"):
 @st.cache_data
 def export_geotiff(array, transform, crs="EPSG:4326", metadata=None):
     """
-    Export array as a GeoTIFF with optional metadata.
+    Export array as GeoTIFF with optional metadata.
     Returns: bytes of the GeoTIFF.
     """
     memfile = io.BytesIO()
@@ -171,44 +166,36 @@ Analyze terrain, hydrology, and burned-area risks using STL files and optional b
 Outputs are cached for performance and exported as GeoTIFFs.
 """)
 
-# Sidebar: Option to use local files instead of uploads
+# Sidebar: Option to use local files
 use_local = st.sidebar.checkbox("Use local files", value=False)
 
 # Define geographic bounds (EPSG:4326)
-BOUNDS = (27.906069, 36.92337189, 28.045764, 36.133509)  # left, top, right, bottom
+BOUNDS = (27.906069, 36.92337189, 28.045764, 36.133509)  # (left, top, right, bottom)
 
-# If using local files, define the file paths relative to the script
+# File inputs: either local files or via uploader
 if use_local:
     script_dir = os.path.dirname(__file__)
     stl_file_path = os.path.join(script_dir, "3dlayout.stl")
     burned_file_path = os.path.join(script_dir, "2023_11_15.tif")
     
-    # Check if files exist
     if not os.path.isfile(stl_file_path):
         st.error(f"Local STL file not found: {stl_file_path}")
         st.stop()
     else:
         st.write(f"Using local STL: {stl_file_path}")
-    
+        
     if not os.path.isfile(burned_file_path):
         st.warning(f"Local burned-area file not found: {burned_file_path}")
-        local_burned_available = False
+        burned_file_obj = None
     else:
         st.write(f"Using local burned-area file: {burned_file_path}")
-        local_burned_available = True
-
-    # Open local files as binary streams for processing
-    with open(stl_file_path, "rb") as f:
-        stl_file_obj = io.BytesIO(f.read())
-    if local_burned_available:
         with open(burned_file_path, "rb") as f:
             burned_file_obj = io.BytesIO(f.read())
-    else:
-        burned_file_obj = None
+    with open(stl_file_path, "rb") as f:
+        stl_file_obj = io.BytesIO(f.read())
 else:
-    # Use file uploader if not using local files
-    stl_file_obj = uploaded_stl
-    burned_file_obj = uploaded_burned
+    stl_file_obj = st.file_uploader("Upload STL File (for DEM)", type=["stl"])
+    burned_file_obj = st.file_uploader("Upload Burned-Area Data (KMZ, TIFF, JPG, PNG)", type=["kmz", "tif", "tiff", "jpg", "png"])
 
 # Sidebar Parameters
 with st.sidebar:
@@ -230,193 +217,189 @@ with st.sidebar:
     risk_burn_w = st.slider("Burned Area Weight", 0.0, 2.0, 1.0, help="Weight for burned areas in risk.")
 
 # Input Validation
+if stl_file_obj is None:
+    st.error("STL file is required.")
+    st.stop()
+
 if grid_res <= 0 or rainfall < 0 or duration <= 0 or area_ha <= 0:
     st.error("Invalid input: Grid resolution, rainfall, duration, and area must be positive.")
     st.stop()
 
-# Processing: Proceed if STL file is provided (local or uploader)
-if stl_file_obj is not None:
-    with st.spinner("Processing STL file..."):
-        grid_z, transform = process_stl_file(stl_file_obj, scale, offset, grid_res, BOUNDS)
-        
-        # Compute cell size in meters based on bounds and grid resolution
-        dx = (BOUNDS[2] - BOUNDS[0]) / (grid_res - 1)
-        dy = (BOUNDS[1] - BOUNDS[3]) / (grid_res - 1)
-        avg_lat = (BOUNDS[1] + BOUNDS[3]) / 2.0
-        dx_m = dx * 111320 * np.cos(np.radians(avg_lat))
-        dy_m = dy * 111320
-        cell_size_m = (dx_m + dy_m) / 2  # average cell size
-        
-        # Terrain derivatives: slope, aspect, curvature
-        slope, aspect, curvature = compute_terrain_derivatives(grid_z, dx_m, dy_m)
-        # Hydro derivatives: flow accumulation, TWI using pysheds
-        flow_acc, twi = compute_hydro_derivatives(grid_z, cell_size_m)
+# Processing
+with st.spinner("Processing STL file..."):
+    grid_z, transform = process_stl_file(stl_file_obj, scale, offset, grid_res, BOUNDS)
+    # Compute cell size in meters based on bounds and grid resolution
+    dx = (BOUNDS[2] - BOUNDS[0]) / (grid_res - 1)
+    dy = (BOUNDS[1] - BOUNDS[3]) / (grid_res - 1)
+    avg_lat = (BOUNDS[1] + BOUNDS[3]) / 2.0
+    dx_m = dx * 111320 * np.cos(np.radians(avg_lat))
+    dy_m = dy * 111320
+    cell_size_m = (dx_m + dy_m) / 2  # Average cell size
+    
+    slope, aspect, curvature = compute_terrain_derivatives(grid_z, dx_m, dy_m)
+    flow_acc, twi = compute_hydro_derivatives(grid_z, cell_size_m)
 
-    # Burned-Area Processing
-    burned_mask = None
-    if burned_file_obj is not None:
-        ext = os.path.splitext(getattr(burned_file_obj, "name", ""))[1].lower()
-        with st.spinner("Processing burned-area data..."):
-            if ext == ".kmz":
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as tmp:
+# Burned-Area Processing
+burned_mask = None
+if burned_file_obj is not None:
+    ext = os.path.splitext(getattr(burned_file_obj, "name", ""))[1].lower()
+    with st.spinner("Processing burned-area data..."):
+        if ext == ".kmz":
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as tmp:
+                tmp.write(burned_file_obj.read())
+                kmz_filename = tmp.name
+            try:
+                with zipfile.ZipFile(kmz_filename, 'r') as zf:
+                    kml_file = [n for n in zf.namelist() if n.endswith('.kml')][0]
+                    kml_data = zf.read(kml_file)
+                k_obj = kml.KML()
+                k_obj.from_string(kml_data)
+                polygons = [p.geometry for f in k_obj.features() for p in f.features() if hasattr(p, 'geometry')]
+                if polygons:
+                    burned_mask = rasterize([(p, 1) for p in polygons], out_shape=grid_z.shape, transform=transform, fill=0, dtype=np.uint8)
+            except Exception as e:
+                st.warning(f"Error processing KMZ: {e}")
+        elif ext in [".tif", ".tiff"]:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                     tmp.write(burned_file_obj.read())
-                    kmz_filename = tmp.name
-                try:
-                    with zipfile.ZipFile(kmz_filename, 'r') as zf:
-                        kml_file = [n for n in zf.namelist() if n.endswith('.kml')][0]
-                        kml_data = zf.read(kml_file)
-                    k_obj = kml.KML()
-                    k_obj.from_string(kml_data)
-                    # Extract polygons from nested features
-                    polygons = [p.geometry for f in k_obj.features() for p in f.features() if hasattr(p, 'geometry')]
-                    if polygons:
-                        burned_mask = rasterize([(p, 1) for p in polygons], out_shape=grid_z.shape, transform=transform, fill=0, dtype=np.uint8)
-                except Exception as e:
-                    st.warning(f"Error processing KMZ: {e}")
-            elif ext in [".tif", ".tiff"]:
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                        tmp.write(burned_file_obj.read())
-                        tif_filename = tmp.name
-                    with rasterio.open(tif_filename) as src:
-                        # Use EPSG:4326 if no CRS is provided
-                        src_crs = src.crs if src.crs is not None else "EPSG:4326"
-                        burned_data = src.read(1)
-                        burned_mask = np.zeros_like(grid_z, dtype=np.float32)
-                        reproject(
-                            burned_data,
-                            burned_mask,
-                            src_transform=src.transform,
-                            src_crs=src_crs,
-                            dst_transform=transform,
-                            dst_crs="EPSG:4326",
-                            resampling=Resampling.nearest
-                        )
-                except Exception as e:
-                    st.warning(f"Error reading burned TIFF: {e}")
-            elif ext in [".jpg", ".jpeg", ".png"]:
-                try:
-                    burned_img = imageio.imread(burned_file_obj)
-                    # Simple threshold: mark as burned if red is high and green/blue are low
-                    burned_mask = ((burned_img[..., 0] > 150) &
-                                   (burned_img[..., 1] < 100) &
-                                   (burned_img[..., 2] < 100)).astype(np.uint8)
-                    # Resize to match DEM grid
-                    burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
-                except Exception as e:
-                    st.warning(f"Error reading burned image: {e}")
-            else:
-                st.warning("Unsupported burned-area file format.")
-
-    # Risk Map Calculation (if burned mask available)
-    if burned_mask is not None:
-        norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
-        norm_dem = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
-        risk_map = (risk_slope_w * norm_slope + risk_dem_w * norm_dem + risk_burn_w * burned_mask)
-        risk_map = (risk_map - risk_map.min()) / (risk_map.max() - risk_map.min() + 1e-9)
-    else:
-        risk_map = None
-
-    # Hydrograph Calculation
-    area_m2 = area_ha * 10000
-    V_runoff = (rainfall / 1000) * duration * area_m2 * runoff_coeff
-    Q_peak = V_runoff / duration
-    t = np.linspace(0, 6, int(6 * 60))
-    Q = np.where(t <= duration, Q_peak * (t / duration), Q_peak * np.exp(-recession * (t - duration)))
-
-    # -----------------------------------------------------------------------------
-    # Display Results in Tabs
-    # -----------------------------------------------------------------------------
-    tabs = st.tabs(["Terrain Analysis", "Hydrology", "Risk Assessment", "Export"])
-    
-    with tabs[0]:
-        col1, col2 = st.columns(2)
-        with col1:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(grid_z, extent=BOUNDS, origin='lower', cmap='hot')
-            ax.set_title("DEM")
-            fig.colorbar(im, ax=ax, label="Elevation (m)")
-            st.pyplot(fig)
-        with col2:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(slope, extent=BOUNDS, origin='lower', cmap='viridis')
-            ax.set_title("Slope")
-            fig.colorbar(im, ax=ax, label="Slope (°)")
-            st.pyplot(fig)
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(aspect, extent=BOUNDS, origin='lower', cmap='twilight')
-            ax.set_title("Aspect")
-            fig.colorbar(im, ax=ax, label="Aspect (°)")
-            st.pyplot(fig)
-        with col4:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(curvature, extent=BOUNDS, origin='lower', cmap='Spectral')
-            ax.set_title("Curvature")
-            fig.colorbar(im, ax=ax, label="Curvature")
-            st.pyplot(fig)
-
-    with tabs[1]:
-        col1, col2 = st.columns(2)
-        with col1:
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.plot(t, Q)
-            ax.set_title("Runoff Hydrograph")
-            ax.set_xlabel("Time (hr)")
-            ax.set_ylabel("Flow (m³/hr)")
-            st.pyplot(fig)
-            st.write(f"Peak Flow: {Q_peak:.2f} m³/hr")
-            st.write(f"Total Runoff Volume: {V_runoff:.2f} m³")
-        with col2:
-            st.image(create_gif(grid_z / grid_z.max(), title="Flow Animation"), caption="Flow Animation")
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(flow_acc, extent=BOUNDS, origin='lower', cmap='viridis')
-            ax.set_title("Flow Accumulation")
-            fig.colorbar(im, ax=ax, label="Accumulated Flow")
-            st.pyplot(fig)
-        with col4:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            im = ax.imshow(twi, extent=BOUNDS, origin='lower', cmap='coolwarm')
-            ax.set_title("Topographic Wetness Index (TWI)")
-            fig.colorbar(im, ax=ax, label="TWI")
-            st.pyplot(fig)
-
-    with tabs[2]:
-        if burned_mask is not None:
-            col1, col2 = st.columns(2)
-            with col1:
-                fig, ax = plt.subplots(figsize=(5, 4))
-                im = ax.imshow(burned_mask, extent=BOUNDS, origin='lower', cmap='gray')
-                ax.set_title("Burned Area")
-                fig.colorbar(im, ax=ax, label="Burned (1)")
-                st.pyplot(fig)
-            with col2:
-                if risk_map is not None:
-                    fig, ax = plt.subplots(figsize=(5, 4))
-                    im = ax.imshow(risk_map, extent=BOUNDS, origin='lower', cmap='inferno')
-                    ax.set_title("Risk Map")
-                    fig.colorbar(im, ax=ax, label="Risk Score")
-                    st.pyplot(fig)
-                    st.image(create_gif(risk_map, title="Risk Animation"), caption="Risk Animation")
+                    tif_filename = tmp.name
+                with rasterio.open(tif_filename) as src:
+                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
+                    burned_data = src.read(1)
+                    burned_mask = np.zeros_like(grid_z, dtype=np.float32)
+                    reproject(
+                        burned_data,
+                        burned_mask,
+                        src_transform=src.transform,
+                        src_crs=src_crs,
+                        dst_transform=transform,
+                        dst_crs="EPSG:4326",
+                        resampling=Resampling.nearest
+                    )
+            except Exception as e:
+                st.warning(f"Error reading burned TIFF: {e}")
+        elif ext in [".jpg", ".jpeg", ".png"]:
+            try:
+                burned_img = imageio.imread(burned_file_obj)
+                burned_mask = ((burned_img[..., 0] > 150) &
+                               (burned_img[..., 1] < 100) &
+                               (burned_img[..., 2] < 100)).astype(np.uint8)
+                burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
+            except Exception as e:
+                st.warning(f"Error reading burned image: {e}")
         else:
-            st.info("No burned-area data available to compute risk.")
-    
-    with tabs[3]:
-        st.subheader("Export GeoTIFFs")
-        st.download_button("Download DEM GeoTIFF", export_geotiff(grid_z, transform, metadata={"units": "meters"}), "dem.tif")
-        st.download_button("Download Slope GeoTIFF", export_geotiff(slope, transform, metadata={"units": "degrees"}), "slope.tif")
-        st.download_button("Download Aspect GeoTIFF", export_geotiff(aspect, transform, metadata={"units": "degrees"}), "aspect.tif")
-        st.download_button("Download Curvature GeoTIFF", export_geotiff(curvature, transform), "curvature.tif")
-        st.download_button("Download Flow Accumulation GeoTIFF", export_geotiff(flow_acc, transform), "flow_acc.tif")
-        st.download_button("Download TWI GeoTIFF", export_geotiff(twi, transform), "twi.tif")
-        if burned_mask is not None:
-            st.download_button("Download Burned Mask GeoTIFF", export_geotiff(burned_mask, transform), "burned_mask.tif")
-            if risk_map is not None:
-                st.download_button("Download Risk Map GeoTIFF", export_geotiff(risk_map, transform), "risk_map.tif")
+            st.warning("Unsupported burned-area file format.")
+
+# Risk Map Calculation (if burned data available)
+if burned_mask is not None:
+    norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
+    norm_dem = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
+    risk_map = (risk_slope_w * norm_slope + risk_dem_w * norm_dem + risk_burn_w * burned_mask)
+    risk_map = (risk_map - risk_map.min()) / (risk_map.max() - risk_map.min() + 1e-9)
 else:
-    st.info("Please upload an STL file to begin analysis.")
+    risk_map = None
+
+# Hydrograph Calculation
+area_m2 = area_ha * 10000
+V_runoff = (rainfall / 1000) * duration * area_m2 * runoff_coeff
+Q_peak = V_runoff / duration
+t = np.linspace(0, 6, int(6 * 60))
+Q = np.where(t <= duration, Q_peak * (t / duration), Q_peak * np.exp(-recession * (t - duration)))
+
+# -----------------------------------------------------------------------------
+# Display Results in Tabs
+# -----------------------------------------------------------------------------
+tabs = st.tabs(["Terrain Analysis", "Hydrology", "Risk Assessment", "Export"])
+    
+with tabs[0]:
+    col1, col2 = st.columns(2)
+    with col1:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(grid_z, extent=BOUNDS, origin='lower', cmap='hot')
+        ax.set_title("DEM")
+        fig.colorbar(im, ax=ax, label="Elevation (m)")
+        st.pyplot(fig)
+    with col2:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(slope, extent=BOUNDS, origin='lower', cmap='viridis')
+        ax.set_title("Slope")
+        fig.colorbar(im, ax=ax, label="Slope (°)")
+        st.pyplot(fig)
+        
+    col3, col4 = st.columns(2)
+    with col3:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(aspect, extent=BOUNDS, origin='lower', cmap='twilight')
+        ax.set_title("Aspect")
+        fig.colorbar(im, ax=ax, label="Aspect (°)")
+        st.pyplot(fig)
+    with col4:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(curvature, extent=BOUNDS, origin='lower', cmap='Spectral')
+        ax.set_title("Curvature")
+        fig.colorbar(im, ax=ax, label="Curvature")
+        st.pyplot(fig)
+
+with tabs[1]:
+    col1, col2 = st.columns(2)
+    with col1:
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.plot(t, Q)
+        ax.set_title("Runoff Hydrograph")
+        ax.set_xlabel("Time (hr)")
+        ax.set_ylabel("Flow (m³/hr)")
+        st.pyplot(fig)
+        st.write(f"Peak Flow: {Q_peak:.2f} m³/hr")
+        st.write(f"Total Runoff Volume: {V_runoff:.2f} m³")
+    with col2:
+        st.image(create_gif(grid_z / grid_z.max(), title="Flow Animation"), caption="Flow Animation")
+        
+    col3, col4 = st.columns(2)
+    with col3:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(flow_acc, extent=BOUNDS, origin='lower', cmap='viridis')
+        ax.set_title("Flow Accumulation")
+        fig.colorbar(im, ax=ax, label="Accumulated Flow")
+        st.pyplot(fig)
+    with col4:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        im = ax.imshow(twi, extent=BOUNDS, origin='lower', cmap='coolwarm')
+        ax.set_title("Topographic Wetness Index (TWI)")
+        fig.colorbar(im, ax=ax, label="TWI")
+        st.pyplot(fig)
+
+with tabs[2]:
+    if burned_mask is not None:
+        col1, col2 = st.columns(2)
+        with col1:
+            fig, ax = plt.subplots(figsize=(5, 4))
+            im = ax.imshow(burned_mask, extent=BOUNDS, origin='lower', cmap='gray')
+            ax.set_title("Burned Area")
+            fig.colorbar(im, ax=ax, label="Burned (1)")
+            st.pyplot(fig)
+        with col2:
+            if risk_map is not None:
+                fig, ax = plt.subplots(figsize=(5, 4))
+                im = ax.imshow(risk_map, extent=BOUNDS, origin='lower', cmap='inferno')
+                ax.set_title("Risk Map")
+                fig.colorbar(im, ax=ax, label="Risk Score")
+                st.pyplot(fig)
+                st.image(create_gif(risk_map, title="Risk Animation"), caption="Risk Animation")
+    else:
+        st.info("No burned-area data available to compute risk.")
+    
+with tabs[3]:
+    st.subheader("Export GeoTIFFs")
+    st.download_button("Download DEM GeoTIFF", export_geotiff(grid_z, transform, metadata={"units": "meters"}), "dem.tif")
+    st.download_button("Download Slope GeoTIFF", export_geotiff(slope, transform, metadata={"units": "degrees"}), "slope.tif")
+    st.download_button("Download Aspect GeoTIFF", export_geotiff(aspect, transform, metadata={"units": "degrees"}), "aspect.tif")
+    st.download_button("Download Curvature GeoTIFF", export_geotiff(curvature, transform), "curvature.tif")
+    st.download_button("Download Flow Accumulation GeoTIFF", export_geotiff(flow_acc, transform), "flow_acc.tif")
+    st.download_button("Download TWI GeoTIFF", export_geotiff(twi, transform), "twi.tif")
+    if burned_mask is not None:
+        st.download_button("Download Burned Mask GeoTIFF", export_geotiff(burned_mask, transform), "burned_mask.tif")
+        if risk_map is not None:
+            st.download_button("Download Risk Map GeoTIFF", export_geotiff(risk_map, transform), "risk_map.tif")
+else:
+    st.info("Please upload an STL file (or use local files) to begin analysis.")
