@@ -79,8 +79,8 @@ def process_stl_file(file_obj, scale, offset, grid_res, bounds):
     yi = np.linspace(top, bottom, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
-    grid_z = np.clip(grid_z, 0, 500)  # Adjust as needed
-
+    grid_z = np.clip(grid_z, 0, 500)  # Adjust clip range as needed
+    
     dx = (right - left) / (grid_res - 1)
     dy = (top - bottom) / (grid_res - 1)
     transform = from_origin(left, top, dx, dy)
@@ -101,16 +101,18 @@ def compute_terrain_derivatives(grid_z, dx_meters, dy_meters):
     return slope, aspect, curvature
 
 @st.cache_data
-def compute_hydro_derivatives(grid_z, cell_size_m):
+def compute_hydro_derivatives(grid_z, transform, cell_size_m):
     """
     Compute flow accumulation and TWI using pysheds.
+    Uses a fallback method if Grid.from_array is not available.
     Returns: (flow_acc, twi)
     """
-    grid = Grid.from_array(grid_z, data_name='dem')
+    grid = Grid()
+    # Add the DEM data manually into the grid.
+    grid.add_gridded_data(grid_z, data_name='dem', affine=transform, nodata=-9999, crs={'init':'epsg:4326'})
     grid.fill_depressions(data='dem', out_name='filled_dem')
     grid.flowdir(data='filled_dem', out_name='flow_dir')
     flow_acc = grid.accumulation(data='flow_dir')
-
     slope_rad = np.radians(np.gradient(grid_z, cell_size_m)[0])
     twi = np.log((flow_acc * cell_size_m**2) / (np.tan(np.clip(slope_rad, 0.01, np.inf)) + 1e-9))
     return flow_acc, twi
@@ -126,12 +128,12 @@ def create_gif(data_array, frames=10, fps=2, title="Scenario"):
     ax.set_title(title)
     ax.axis('off')
     fig.colorbar(im, ax=ax, label="Value")
-
+    
     def update(frame):
         im.set_data(np.clip(data_array * (1 + 0.1 * frame), 0, data_array.max()))
         ax.set_title(f"{title} Frame {frame + 1}")
         return im,
-
+    
     ani = animation.FuncAnimation(fig, update, frames=frames, interval=1000/fps)
     buf = io.BytesIO()
     ani.save(buf, format='gif', writer='pillow', fps=fps)
@@ -173,16 +175,15 @@ Outputs are cached for performance and exported as GeoTIFFs.
 # Define geographic bounds (EPSG:4326)
 BOUNDS = (27.906069, 36.92337189, 28.045764, 36.133509)  # (left, top, right, bottom)
 
-# Checkbox: Use local files
+# Sidebar: Option to use local files from the same folder as Hydro.py
 use_local = st.sidebar.checkbox("Use local files (same folder as Hydro.py)", value=False)
 
 if use_local:
-    # EXACT filenames from your screenshot:
     script_dir = os.path.dirname(__file__)
+    # EXACT filenames from your provided photo
     stl_file_path = os.path.join(script_dir, "3d layout.stl")
     burned_file_path = os.path.join(script_dir, "burned areas.tif")
-
-    # Check STL
+    
     if not os.path.isfile(stl_file_path):
         st.error(f"Local STL file not found: {stl_file_path}")
         st.stop()
@@ -190,8 +191,7 @@ if use_local:
         st.write(f"Using local STL: {stl_file_path}")
     with open(stl_file_path, "rb") as f:
         stl_file_obj = io.BytesIO(f.read())
-
-    # Check burned-area
+    
     if not os.path.isfile(burned_file_path):
         st.warning(f"Local burned-area file not found: {burned_file_path}")
         burned_file_obj = None
@@ -200,7 +200,6 @@ if use_local:
         with open(burned_file_path, "rb") as f:
             burned_file_obj = io.BytesIO(f.read())
 else:
-    # Otherwise use file uploader
     stl_file_obj = st.file_uploader("Upload STL File (for DEM)", type=["stl"])
     burned_file_obj = st.file_uploader("Upload Burned-Area Data (KMZ, TIFF, JPG, PNG)", type=["kmz", "tif", "tiff", "jpg", "png"])
 
@@ -231,21 +230,23 @@ if grid_res <= 0 or rainfall < 0 or duration <= 0 or area_ha <= 0:
     st.error("Invalid input: Grid resolution, rainfall, duration, and area must be positive.")
     st.stop()
 
-# Process STL to generate DEM
+# -----------------------------------------------------------------------------
+# Processing: Generate DEM from STL and compute derivatives
+# -----------------------------------------------------------------------------
 with st.spinner("Processing STL file..."):
     grid_z, transform = process_stl_file(stl_file_obj, scale, offset, grid_res, BOUNDS)
-
     dx = (BOUNDS[2] - BOUNDS[0]) / (grid_res - 1)
     dy = (BOUNDS[1] - BOUNDS[3]) / (grid_res - 1)
     avg_lat = (BOUNDS[1] + BOUNDS[3]) / 2.0
     dx_m = dx * 111320 * np.cos(np.radians(avg_lat))
     dy_m = dy * 111320
     cell_size_m = (dx_m + dy_m) / 2
-
     slope, aspect, curvature = compute_terrain_derivatives(grid_z, dx_m, dy_m)
-    flow_acc, twi = compute_hydro_derivatives(grid_z, cell_size_m)
+    flow_acc, twi = compute_hydro_derivatives(grid_z, transform, cell_size_m)
 
-# Process burned-area data (if any)
+# -----------------------------------------------------------------------------
+# Processing: Burned-Area Data (if provided)
+# -----------------------------------------------------------------------------
 burned_mask = None
 if burned_file_obj is not None:
     with st.spinner("Processing burned-area data..."):
@@ -294,16 +295,15 @@ if burned_file_obj is not None:
                 burned_mask = ((burned_img[..., 0] > 150) &
                                (burned_img[..., 1] < 100) &
                                (burned_img[..., 2] < 100)).astype(np.uint8)
-                burned_mask = np.array(Image.fromarray(burned_mask).resize(
-                    (grid_z.shape[1], grid_z.shape[0]),
-                    resample=Image.NEAREST
-                ))
+                burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
             except Exception as e:
                 st.warning(f"Error reading burned image: {e}")
         else:
             st.warning("Unsupported burned-area file format.")
 
-# Risk map calculation
+# -----------------------------------------------------------------------------
+# Risk Map Calculation
+# -----------------------------------------------------------------------------
 if burned_mask is not None:
     norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
     norm_dem = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
@@ -314,16 +314,17 @@ if burned_mask is not None:
 else:
     risk_map = None
 
-# Compute runoff hydrograph
+# -----------------------------------------------------------------------------
+# Runoff Hydrograph Calculation
+# -----------------------------------------------------------------------------
 area_m2 = area_ha * 10000
 V_runoff = (rainfall / 1000) * duration * area_m2 * runoff_coeff
 Q_peak = V_runoff / duration
 t = np.linspace(0, 6, int(6 * 60))
-Q = np.where(t <= duration, Q_peak * (t / duration),
-             Q_peak * np.exp(-recession * (t - duration)))
+Q = np.where(t <= duration, Q_peak * (t / duration), Q_peak * np.exp(-recession * (t - duration)))
 
 # -----------------------------------------------------------------------------
-# Display results in tabs
+# Display Results in Tabs
 # -----------------------------------------------------------------------------
 tabs = st.tabs(["Terrain Analysis", "Hydrology", "Risk Assessment", "Export"])
 
@@ -341,7 +342,7 @@ with tabs[0]:
         ax.set_title("Slope")
         fig.colorbar(im, ax=ax, label="Slope (°)")
         st.pyplot(fig)
-        
+    
     col3, col4 = st.columns(2)
     with col3:
         fig, ax = plt.subplots(figsize=(5, 4))
@@ -416,3 +417,5 @@ with tabs[3]:
         st.download_button("Download Burned Mask GeoTIFF", export_geotiff(burned_mask, transform), "burned_mask.tif")
         if risk_map is not None:
             st.download_button("Download Risk Map GeoTIFF", export_geotiff(risk_map, transform), "risk_map.tif")
+else:
+    st.info("Please upload an STL file (or use local files) to begin analysis.")
