@@ -103,10 +103,13 @@ def compute_terrain_derivatives(grid_z, dx_meters, dy_meters):
 def compute_hydro_derivatives(grid_z, transform, cell_size_m):
     """
     Compute flow accumulation and TWI using pysheds.
+    Instead of Grid.from_array, we create a new Grid and manually add the DEM.
     Returns: (flow_acc, twi)
     """
     grid = Grid()
-    grid.add_gridded_data(grid_z, data_name='dem', affine=transform, nodata=-9999, crs={'init':'epsg:4326'})
+    # Set the DEM directly
+    grid.data['dem'] = grid_z
+    grid.affine = transform
     grid.fill_depressions(data='dem', out_name='filled_dem')
     grid.flowdir(data='filled_dem', out_name='flow_dir')
     flow_acc = grid.accumulation(data='flow_dir')
@@ -290,10 +293,7 @@ if burned_file_obj is not None:
                 burned_mask = ((burned_img[..., 0] > 150) &
                                (burned_img[..., 1] < 100) &
                                (burned_img[..., 2] < 100)).astype(np.uint8)
-                burned_mask = np.array(Image.fromarray(burned_mask).resize(
-                    (grid_z.shape[1], grid_z.shape[0]),
-                    resample=Image.NEAREST
-                ))
+                burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
             except Exception as e:
                 st.warning(f"Error reading burned image: {e}")
         else:
@@ -319,8 +319,7 @@ area_m2 = area_ha * 10000
 V_runoff = (rainfall / 1000) * duration * area_m2 * runoff_coeff
 Q_peak = V_runoff / duration
 t = np.linspace(0, 6, int(6 * 60))
-Q = np.where(t <= duration, Q_peak * (t / duration),
-             Q_peak * np.exp(-recession * (t - duration)))
+Q = np.where(t <= duration, Q_peak * (t / duration), Q_peak * np.exp(-recession * (t - duration)))
 
 # -----------------------------------------------------------------------------
 # Display Results in Tabs
