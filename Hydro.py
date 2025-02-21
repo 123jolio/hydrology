@@ -106,7 +106,6 @@ if uploaded_file is not None:
     x_min, x_max = x_raw.min(), x_raw.max()
     y_min, y_max = y_raw.min(), y_raw.max()
     # Linearly map x_raw to the provided longitude range and y_raw to the latitude range.
-    # Note: We subtract from top_bound so that higher raw y corresponds to higher latitude.
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = top_bound - (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
 
@@ -116,7 +115,6 @@ if uploaded_file is not None:
     grid_x, grid_y = np.meshgrid(xi, yi)
 
     # Interpolate the adjusted elevation values onto the grid using cubic interpolation.
-    # Note: Use the transformed lon/lat coordinates.
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
@@ -192,10 +190,10 @@ if uploaded_file is not None:
 
     with tab1:
         st.subheader("DEM Heatmap")
-        # Force the colormap to span 0 to 500 m for the plot and legend.
+        # Plot with vmin and vmax forcing the color scale from 0 to 500 m.
         fig, ax = plt.subplots(figsize=(8, 6))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='upper', cmap='hot', aspect='auto', vmin=0, vmax=500)
+                       origin='lower', cmap='hot', aspect='auto', vmin=0, vmax=500)
         ax.set_title("DEM Heatmap (Adjusted Elevation)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -206,7 +204,7 @@ if uploaded_file is not None:
         st.subheader("Slope Map")
         fig, ax = plt.subplots(figsize=(8, 6))
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='upper', cmap='viridis', aspect='auto')
+                       origin='lower', cmap='viridis', aspect='auto')
         ax.set_title("Slope Map (Degrees)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -217,7 +215,7 @@ if uploaded_file is not None:
         st.subheader("Aspect Map")
         fig, ax = plt.subplots(figsize=(8, 6))
         im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='upper', cmap='twilight', aspect='auto')
+                       origin='lower', cmap='twilight', aspect='auto')
         ax.set_title("Aspect Map (Degrees)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
