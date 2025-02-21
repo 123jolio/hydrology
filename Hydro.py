@@ -8,7 +8,6 @@ import io
 import rasterio
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
-from rasterio.features import rasterize
 import imageio  # for GIF creation
 import os
 from PIL import Image
@@ -72,8 +71,8 @@ except Exception:
 st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect), 
-overlays a flow simulation on the DEM, estimates retention time, nutrient leaching, and assesses burned-area risk from a TIFF file.  
-Additional terrain derivatives (flow accumulation, topographic wetness index, and curvature) are also computed.
+overlays a flow simulation on the DEM, estimates retention time, nutrient leaching, and computes additional terrain derivatives 
+(flow accumulation, topographic wetness index, and curvature).  
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
@@ -86,10 +85,9 @@ right_bound = 28.045764
 bottom_bound = 36.133509
 
 # -----------------------------------------------------------------------------
-# 5. File upload: STL and burned-area data (TIFF only)
+# 5. File upload: STL file (burned area upload removed)
 # -----------------------------------------------------------------------------
 uploaded_stl = st.file_uploader("Upload STL file (for DEM)", type=["stl"])
-uploaded_burned = st.file_uploader("Upload Burned-Area Data (TIFF only)", type=["tif", "tiff"])
 
 # -----------------------------------------------------------------------------
 # 6. Global Processing Parameters (remain in the sidebar)
@@ -115,16 +113,9 @@ soil_nutrient = st.sidebar.number_input("Soil Nutrient (kg/ha)", value=50.0, ste
 veg_retention = st.sidebar.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05)
 erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
-# Note: The sidebar now contains only processing parameters. 
-# Visualization controls will appear in each tab below.
-
 # -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
 # -----------------------------------------------------------------------------
-risk_map = None       # Will hold risk map if burned area is provided
-burned_mask = None    # For burned-area analysis
-burned_img_raw = None # For raw burned TIFF values
-
 if uploaded_stl is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
         tmp_stl.write(uploaded_stl.read())
@@ -188,56 +179,7 @@ if uploaded_stl is not None:
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
-    # 8. Burned-Area Processing (TIFF only)
-    # -----------------------------------------------------------------------------
-    if uploaded_burned is not None:
-        ext = os.path.splitext(uploaded_burned.name)[1].lower()
-        if ext in [".tif", ".tiff"]:
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_tif:
-                    tmp_tif.write(uploaded_burned.read())
-                    tif_filename = tmp_tif.name
-                with rasterio.open(tif_filename) as src:
-                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
-                    burned_img_raw = src.read(1)
-                    st.write("Raw burned TIFF values: min", burned_img_raw.min(), "max", burned_img_raw.max())
-                    src_transform = src.transform
-                    burned_img_norm = (burned_img_raw - burned_img_raw.min()) / (burned_img_raw.max() - burned_img_raw.min() + 1e-9)
-                    burned_mask_temp = burned_img_norm
-                    burned_mask_resampled = np.empty(grid_z.shape, dtype=np.float32)
-                    reproject(
-                        source=burned_mask_temp,
-                        destination=burned_mask_resampled,
-                        src_transform=src_transform,
-                        src_crs=src_crs,
-                        dst_transform=transform,
-                        dst_crs="EPSG:4326",
-                        resampling=Resampling.nearest
-                    )
-                    burned_mask = burned_mask_resampled
-            except Exception as e:
-                st.warning(f"Error reading burned TIFF: {e}")
-                burned_mask = None
-        else:
-            st.warning("Please upload a TIFF file for burned-area analysis.")
-            burned_mask = None
-
-    # -----------------------------------------------------------------------------
-    # 9. Risk Map Calculation
-    # -----------------------------------------------------------------------------
-    if burned_mask is not None:
-        # Use fixed normalization here; you can also add legend sliders in the tab later.
-        norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
-        norm_dem   = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
-        norm_rain = (rainfall_intensity * event_duration) / 100.0
-        risk_map = (1.0 * norm_slope +
-                    1.0 * norm_dem +
-                    1.0 * burned_mask +
-                    1.0 * norm_rain)
-        risk_map = (risk_map - risk_map.min()) / (risk_map.max() - risk_map.min() + 1e-9)
-
-    # -----------------------------------------------------------------------------
-    # 10. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
+    # 8. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
     # -----------------------------------------------------------------------------
     def compute_flow_accumulation(dem):
         acc = np.ones_like(dem)
@@ -265,13 +207,17 @@ if uploaded_stl is not None:
     flow_acc = compute_flow_accumulation(grid_z)
     slope_radians = np.radians(slope)
     cell_area = dx_meters * dy_meters
-    twi = np.log((flow_acc * cell_area) / (np.tan(slope_radians) + 1e-9))
+    # -----------------------------------------------------------------------------
+    # Modified TWI Calculation:
+    # Using: TWI = ln(((flow_acc + 1) * cell_area) / (tan(slope_radians) + 0.001))
+    # -----------------------------------------------------------------------------
+    twi = np.log(((flow_acc + 1) * cell_area) / (np.tan(slope_radians) + 0.001))
     d2z_dx2 = np.gradient(dz_dx, dx_meters, axis=1)
     d2z_dy2 = np.gradient(dz_dy, dy_meters, axis=0)
     curvature = d2z_dx2 + d2z_dy2
 
     # -----------------------------------------------------------------------------
-    # 11. Helper: Placeholder GIF creation function
+    # 9. Helper: Placeholder GIF creation function
     # -----------------------------------------------------------------------------
     def create_placeholder_gif(data_array, frames=10, fps=2, scenario_name="flow"):
         images = []
@@ -295,20 +241,15 @@ if uploaded_stl is not None:
     flow_placeholder = np.clip(grid_z / (np.max(grid_z) + 1e-9), 0, 1)
     retention_placeholder = np.clip(slope / (np.max(slope) + 1e-9), 0, 1)
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
-    risk_gif = None
-    if risk_map is not None:
-        risk_placeholder = np.clip(risk_map, 0, 1)
-        risk_gif = create_placeholder_gif(risk_placeholder, scenario_name="risk")
 
     # -----------------------------------------------------------------------------
-    # 12. Display results in dedicated tabs
+    # 10. Display results in dedicated tabs
     # -----------------------------------------------------------------------------
     tabs = st.tabs([
         "DEM & Flow Simulation", "Slope Map", "Aspect Map",
         "Retention Time", "GeoTIFF Export",
-        "Nutrient Leaching", "Burned Area Analysis", "Burned Risk",
-        "Flow Accumulation", "Topographic Wetness Index", "Curvature Analysis",
-        "Scenario GIFs", "Raw Burned TIFF"
+        "Nutrient Leaching", "Flow Accumulation", "Topographic Wetness Index",
+        "Curvature Analysis", "Scenario GIFs"
     ])
 
     # Tab 0: DEM heatmap with flow simulation overlay
@@ -399,12 +340,6 @@ if uploaded_stl is not None:
         st.download_button("Download DEM (GeoTIFF)", dem_tiff, "DEM.tif", "image/tiff")
         st.download_button("Download Slope (GeoTIFF)", slope_tiff, "Slope.tif", "image/tiff")
         st.download_button("Download Aspect (GeoTIFF)", aspect_tiff, "Aspect.tif", "image/tiff")
-        if burned_mask is not None:
-            burned_tiff = export_geotiff(burned_mask.astype("float32"), transform)
-            st.download_button("Download Burned Area Mask (GeoTIFF)", burned_tiff, "BurnedArea.tif", "image/tiff")
-        if risk_map is not None:
-            risk_tiff = export_geotiff(risk_map, transform)
-            st.download_button("Download Risk (GeoTIFF)", risk_tiff, "RiskMap.tif", "image/tiff")
 
     # Tab 5: Nutrient Leaching
     with tabs[5]:
@@ -415,46 +350,8 @@ if uploaded_stl is not None:
         st.write(f"Catchment Area: {catchment_area} ha")
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    # Tab 6: Burned Area Analysis
+    # Tab 6: Flow Accumulation Map
     with tabs[6]:
-        with st.expander("Burned Area Legend Boundaries"):
-            burned_vmin = st.number_input("Burned Area Min", value=0.0, step=0.1)
-            burned_vmax = st.number_input("Burned Area Max", value=1.0, step=0.1)
-        st.subheader("Burned Area Analysis")
-        if burned_mask is not None:
-            percent_burned = 100.0 * np.sum(burned_mask) / burned_mask.size
-            st.write(f"Percent Burned Area: {percent_burned:.2f}%")
-            fig, ax = plt.subplots(figsize=(6,4))
-            im = ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                           origin='lower', cmap='gray', vmin=burned_vmin, vmax=burned_vmax, aspect='auto')
-            ax.set_title("Burned Area Mask")
-            ax.set_xlabel("Longitude")
-            ax.set_ylabel("Latitude")
-            fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
-            st.pyplot(fig)
-        else:
-            st.info("No burned-area data available.")
-
-    # Tab 7: Enhanced Burned Risk Map
-    with tabs[7]:
-        with st.expander("Risk Map Legend Boundaries"):
-            risk_vmin = st.number_input("Risk Minimum", value=0.0, step=0.1)
-            risk_vmax = st.number_input("Risk Maximum", value=1.0, step=0.1)
-        st.subheader("Enhanced Burned Risk Map")
-        if risk_map is not None:
-            fig, ax = plt.subplots(figsize=(6,4))
-            im = ax.imshow(risk_map, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                           origin='lower', cmap='inferno', vmin=risk_vmin, vmax=risk_vmax, aspect='auto')
-            ax.set_title("Burned Risk Map (Weighted Factors)")
-            ax.set_xlabel("Longitude")
-            ax.set_ylabel("Latitude")
-            fig.colorbar(im, ax=ax, label="Risk Score (0-1)")
-            st.pyplot(fig)
-        else:
-            st.info("Burned risk map unavailable (no burned-area data or not calculated).")
-
-    # Tab 8: Flow Accumulation Map
-    with tabs[8]:
         with st.expander("Flow Accumulation Legend Boundaries"):
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(flow_acc)), step=1.0)
             flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(flow_acc)), step=1.0)
@@ -468,8 +365,8 @@ if uploaded_stl is not None:
         fig.colorbar(im, ax=ax, label="Accumulated Flow")
         st.pyplot(fig)
 
-    # Tab 9: Topographic Wetness Index (TWI)
-    with tabs[9]:
+    # Tab 7: Topographic Wetness Index (TWI)
+    with tabs[7]:
         with st.expander("TWI Legend Boundaries"):
             twi_vmin = st.number_input("TWI Minimum", value=float(np.min(twi)), step=0.1)
             twi_vmax = st.number_input("TWI Maximum", value=float(np.max(twi)), step=0.1)
@@ -483,8 +380,8 @@ if uploaded_stl is not None:
         fig.colorbar(im, ax=ax, label="TWI")
         st.pyplot(fig)
 
-    # Tab 10: Curvature Analysis
-    with tabs[10]:
+    # Tab 8: Curvature Analysis
+    with tabs[8]:
         with st.expander("Curvature Legend Boundaries"):
             curv_vmin = st.number_input("Curvature Minimum", value=float(np.min(curvature)), step=0.1)
             curv_vmax = st.number_input("Curvature Maximum", value=float(np.max(curvature)), step=0.1)
@@ -498,8 +395,8 @@ if uploaded_stl is not None:
         fig.colorbar(im, ax=ax, label="Curvature")
         st.pyplot(fig)
 
-    # Tab 11: Scenario GIFs (visualization only, so no legend boundaries here)
-    with tabs[11]:
+    # Tab 9: Scenario GIFs (visualization only)
+    with tabs[9]:
         with st.expander("GIF Settings"):
             gif_frames = st.number_input("GIF Frames", value=10, step=1)
             gif_fps = st.number_input("GIF FPS", value=2, step=1)
@@ -510,24 +407,5 @@ if uploaded_stl is not None:
         st.image(create_placeholder_gif(retention_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="retention"), caption="Retention Scenario (Demo)")
         st.markdown("**Nutrient Scenario**")
         st.image(create_placeholder_gif(nutrient_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="nutrient"), caption="Nutrient Scenario (Demo)")
-        if risk_gif is not None:
-            st.markdown("**Risk Scenario**")
-            st.image(create_placeholder_gif(risk_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="risk"), caption="Risk Scenario (Demo)")
-
-    # Tab 12: Raw Burned TIFF Data
-    with tabs[12]:
-        st.subheader("Raw Burned TIFF Data")
-        if burned_img_raw is not None:
-            raw_vis = (burned_img_raw - burned_img_raw.min()) / (burned_img_raw.max() - burned_img_raw.min() + 1e-9)
-            fig, ax = plt.subplots(figsize=(6,4))
-            im = ax.imshow(raw_vis, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                           origin='upper', cmap='gray', aspect='auto')
-            ax.set_title("Raw Burned TIFF")
-            ax.set_xlabel("Longitude")
-            ax.set_ylabel("Latitude")
-            fig.colorbar(im, ax=ax, label="Normalized Value")
-            st.pyplot(fig)
-        else:
-            st.info("No raw burned TIFF data available.")
 else:
     st.info("Please upload an STL file to generate DEM and scenario analyses.")
