@@ -71,8 +71,9 @@ except Exception:
 
 st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
-This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect). It overlays a flow simulation on the DEM, estimates retention time and nutrient leaching, and computes additional terrain derivatives (flow accumulation, topographic wetness index (TWI), and curvature).  
-If a burned‐area TIFF file is provided—with red regions indicating burned and white indicating non‐burned areas—its effect on the hydrological response is incorporated (reduced infiltration and increased surface runoff).  
+This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect) while incorporating burned‐area effects.  
+It overlays a flow simulation on the DEM, estimates retention time and nutrient leaching, and computes additional terrain derivatives (flow accumulation, topographic wetness index (TWI), and curvature).  
+A composite vulnerability index is also computed based on slope, TWI, and burned‐area data.
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
@@ -93,7 +94,7 @@ uploaded_burned = st.file_uploader("Upload Burned-Area Data (TIFF)", type=["tif"
 # -----------------------------------------------------------------------------
 # 6. Global Processing Parameters (in the sidebar)
 # -----------------------------------------------------------------------------
-st.sidebar.header("Processing Parameters")
+st.sidebar.header("DEM & Flow Processing")
 global_scale = st.sidebar.slider("Global Elevation Scale Factor", 0.1, 5.0, 1.0, 0.1)
 global_offset = st.sidebar.slider("Global Elevation Offset (m)", -100.0, 100.0, 0.0, 1.0)
 global_dem_min = st.sidebar.number_input("Global Min Elevation (m)", value=0.0, step=1.0)
@@ -116,11 +117,93 @@ erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
 st.sidebar.header("Burned Area Effects")
 burn_runoff_factor = st.sidebar.slider("Burned Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1)
+burn_interp_method = st.sidebar.selectbox("Burned Mask Resampling", ["nearest", "bilinear"])
+
+st.sidebar.header("Vulnerability Index Weights")
+weight_slope = st.sidebar.slider("Weight for Slope", 0.0, 1.0, 0.4, 0.05)
+weight_twi = st.sidebar.slider("Weight for TWI", 0.0, 1.0, 0.4, 0.05)
+weight_burned = st.sidebar.slider("Weight for Burned Areas", 0.0, 1.0, 0.2, 0.05)
 
 # -----------------------------------------------------------------------------
-# 7. Process STL and compute DEM and related maps
+# 7. Modular Functions
+# -----------------------------------------------------------------------------
+def compute_flow_accumulation(dem):
+    """Simple flow accumulation based on steepest descent."""
+    acc = np.ones_like(dem)
+    rows, cols = dem.shape
+    indices = np.argsort(-dem.flatten())
+    for idx in indices:
+        r, c = np.unravel_index(idx, dem.shape)
+        best_drop = 0
+        best_neighbor = None
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr == 0 and dc == 0:
+                    continue
+                rr, cc = r + dr, c + dc
+                if 0 <= rr < rows and 0 <= cc < cols:
+                    drop = dem[r, c] - dem[rr, cc]
+                    if drop > best_drop:
+                        best_drop = drop
+                        best_neighbor = (rr, cc)
+        if best_neighbor is not None:
+            rr, cc = best_neighbor
+            acc[rr, cc] += acc[r, c]
+    return acc
+
+def export_geotiff(array, transform, crs="EPSG:4326"):
+    """Export numpy array as a GeoTIFF in memory."""
+    memfile = io.BytesIO()
+    with rasterio.io.MemoryFile() as memfile_obj:
+        with memfile_obj.open(
+            driver="GTiff",
+            height=array.shape[0],
+            width=array.shape[1],
+            count=1,
+            dtype="float32",
+            crs=crs,
+            transform=transform,
+        ) as dataset:
+            dataset.write(array.astype("float32"), 1)
+        memfile_obj.seek(0)
+        memfile.write(memfile_obj.read())
+    return memfile.getvalue()
+
+def create_placeholder_gif(data_array, frames=10, fps=2, scenario_name="flow"):
+    """Create a placeholder GIF for scenario visualization."""
+    images = []
+    for i in range(frames):
+        factor = 1 + 0.1 * i
+        array_i = np.clip(data_array * factor, 0, 1e9)
+        fig, ax = plt.subplots(figsize=(4,4))
+        im = ax.imshow(array_i, origin='lower', cmap='hot')
+        ax.set_title(f"{scenario_name.capitalize()} Frame {i+1}")
+        ax.axis('off')
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=80)
+        plt.close(fig)
+        buf.seek(0)
+        images.append(imageio.imread(buf))
+    gif_bytes = io.BytesIO()
+    imageio.mimsave(gif_bytes, images, format='GIF', fps=fps)
+    gif_bytes.seek(0)
+    return gif_bytes.getvalue()
+
+def compute_vulnerability(slope, twi, burned_mask, weight_slope, weight_twi, weight_burned):
+    """Compute a composite vulnerability index combining normalized slope, TWI, and burned area."""
+    norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
+    norm_twi = (twi - twi.min()) / (twi.max() - twi.min() + 1e-9)
+    # If burned_mask is not available, assume no burned areas
+    norm_burned = burned_mask if burned_mask is not None else np.zeros_like(slope)
+    vulnerability = (weight_slope * norm_slope + weight_twi * norm_twi +
+                     weight_burned * norm_burned)
+    return vulnerability
+
+# -----------------------------------------------------------------------------
+# 8. Process STL and compute DEM and related maps
 # -----------------------------------------------------------------------------
 if uploaded_stl is not None:
+    # Save the STL file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
         tmp_stl.write(uploaded_stl.read())
         stl_filename = tmp_stl.name
@@ -131,13 +214,14 @@ if uploaded_stl is not None:
         st.error(f"Error reading STL: {e}")
         st.stop()
 
+    # Extract vertices and compute adjusted elevation
     vertices = stl_mesh.vectors.reshape(-1, 3)
     x_raw = vertices[:, 0]
     y_raw = vertices[:, 1]
     z_raw = vertices[:, 2]
-
     z_adj = (z_raw * global_scale) + global_offset
 
+    # Map STL coordinates to geographic coordinates
     x_min, x_max = x_raw.min(), x_raw.max()
     y_min, y_max = y_raw.min(), y_raw.max()
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
@@ -146,31 +230,31 @@ if uploaded_stl is not None:
     xi = np.linspace(left_bound, right_bound, global_grid_res)
     yi = np.linspace(top_bound, bottom_bound, global_grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
-
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, global_dem_min, global_dem_max)
 
+    # Compute grid spacing in meters
     dx = (right_bound - left_bound) / (global_grid_res - 1)
     dy = (top_bound - bottom_bound) / (global_grid_res - 1)
-
     avg_lat = (top_bound + bottom_bound) / 2.0
     meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
     meters_per_deg_lat = 111320
-
     dx_meters = dx * meters_per_deg_lon
     dy_meters = dy * meters_per_deg_lat
 
+    # Compute slope and aspect
     dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
+    # Define raster transform
     transform = from_origin(left_bound, top_bound, dx, dy)
 
+    # Flow simulation calculations
     area_m2 = catchment_area * 10000.0
     total_rain_m = (rainfall_intensity / 1000.0) * event_duration
     V_runoff = total_rain_m * area_m2 * runoff_coeff
     Q_peak = V_runoff / event_duration
-
     t = np.linspace(0, simulation_hours, int(simulation_hours * 60))
     Q = np.zeros_like(t)
     for i, time in enumerate(t):
@@ -178,12 +262,11 @@ if uploaded_stl is not None:
             Q[i] = Q_peak * (time / event_duration)
         else:
             Q[i] = Q_peak * np.exp(-recession_rate * (time - event_duration))
-
     retention_time = storage_volume / (V_runoff / event_duration) if V_runoff > 0 else None
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
-    # 8. Burned-Area Processing (TIFF)
+    # 9. Process Burned-Area TIFF file and resample to DEM grid
     # -----------------------------------------------------------------------------
     burned_mask = None
     if uploaded_burned is not None:
@@ -197,19 +280,20 @@ if uploaded_stl is not None:
                     src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     burned_img_raw = src.read()
                     src_transform = src.transform
-                    # If the image has multiple bands, assume a color image.
-                    # Assume red regions (high red, low green/blue) indicate burned areas.
+                    # If multi-band assume color image (red indicates burned areas)
                     if burned_img_raw.shape[0] >= 3:
                         red = burned_img_raw[0]
                         green = burned_img_raw[1]
                         blue = burned_img_raw[2]
                         burned_mask_raw = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
                     else:
-                        # Single-band: normalize and threshold.
+                        # Single-band: normalize and threshold
                         band = burned_img_raw[0]
                         norm_band = (band - band.min()) / (band.max() - band.min() + 1e-9)
                         burned_mask_raw = (norm_band > 0.5).astype(np.float32)
                     burned_mask_resampled = np.empty(grid_z.shape, dtype=np.float32)
+                    # Use user-selected interpolation method
+                    interp_method = Resampling.nearest if burn_interp_method=="nearest" else Resampling.bilinear
                     reproject(
                         source=burned_mask_raw,
                         destination=burned_mask_resampled,
@@ -217,7 +301,7 @@ if uploaded_stl is not None:
                         src_crs=src_crs,
                         dst_transform=transform,
                         dst_crs="EPSG:4326",
-                        resampling=Resampling.nearest
+                        resampling=interp_method
                     )
                     burned_mask = burned_mask_resampled
             except Exception as e:
@@ -228,33 +312,10 @@ if uploaded_stl is not None:
             burned_mask = None
 
     # -----------------------------------------------------------------------------
-    # 9. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
+    # 10. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
     # -----------------------------------------------------------------------------
-    def compute_flow_accumulation(dem):
-        acc = np.ones_like(dem)
-        rows, cols = dem.shape
-        indices = np.argsort(-dem.flatten())
-        for idx in indices:
-            r, c = np.unravel_index(idx, dem.shape)
-            best_drop = 0
-            best_neighbor = None
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if dr == 0 and dc == 0:
-                        continue
-                    rr, cc = r + dr, c + dc
-                    if 0 <= rr < rows and 0 <= cc < cols:
-                        drop = dem[r, c] - dem[rr, cc]
-                        if drop > best_drop:
-                            best_drop = drop
-                            best_neighbor = (rr, cc)
-            if best_neighbor is not None:
-                rr, cc = best_neighbor
-                acc[rr, cc] += acc[r, c]
-        return acc
-
     flow_acc = compute_flow_accumulation(grid_z)
-    # Incorporate burned-area effects on flow accumulation:
+    # Adjust flow accumulation to account for burned areas
     if burned_mask is not None:
         adjusted_flow_acc = flow_acc * (1 + burn_runoff_factor * burned_mask)
     else:
@@ -262,69 +323,56 @@ if uploaded_stl is not None:
 
     slope_radians = np.radians(slope)
     cell_area = dx_meters * dy_meters
-
-    # ---- Improved TWI Calculation ----
+    # Improved TWI calculation
     A_eff = adjusted_flow_acc * cell_area
-    epsilon = 0.05  # small constant to avoid division by zero
+    epsilon = 0.05  # avoid division by zero
     twi = np.log((A_eff + 1) / (np.tan(slope_radians) + epsilon))
-
-    # ---- Improved Curvature Analysis using a Laplacian Convolution ----
-    # Create a 3x3 Laplacian kernel. If the grid is nearly square, we can approximate curvature as:
+    # Improved curvature using Laplacian convolution
     laplacian_kernel = np.array([[1,  1, 1],
                                  [1, -8, 1],
                                  [1,  1, 1]]) / (dx_meters * dy_meters)
     curvature = convolve(grid_z, laplacian_kernel, mode='reflect')
 
     # -----------------------------------------------------------------------------
-    # 10. Helper: Placeholder GIF creation function
+    # 11. Compute Composite Vulnerability Index
     # -----------------------------------------------------------------------------
-    def create_placeholder_gif(data_array, frames=10, fps=2, scenario_name="flow"):
-        images = []
-        for i in range(frames):
-            factor = 1 + 0.1 * i
-            array_i = np.clip(data_array * factor, 0, 1e9)
-            fig, ax = plt.subplots(figsize=(4,4))
-            im = ax.imshow(array_i, origin='lower', cmap='hot')
-            ax.set_title(f"{scenario_name.capitalize()} Frame {i+1}")
-            ax.axis('off')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=80)
-            plt.close(fig)
-            buf.seek(0)
-            images.append(imageio.imread(buf))
-        gif_bytes = io.BytesIO()
-        imageio.mimsave(gif_bytes, images, format='GIF', fps=fps)
-        gif_bytes.seek(0)
-        return gif_bytes.getvalue()
+    vulnerability = compute_vulnerability(slope, twi, burned_mask, weight_slope, weight_twi, weight_burned)
 
+    # -----------------------------------------------------------------------------
+    # 12. Prepare placeholder GIFs for demonstration
+    # -----------------------------------------------------------------------------
     flow_placeholder = np.clip(grid_z / (np.max(grid_z) + 1e-9), 0, 1)
     retention_placeholder = np.clip(slope / (np.max(slope) + 1e-9), 0, 1)
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
 
     # -----------------------------------------------------------------------------
-    # 11. Display results in dedicated tabs
+    # 13. Display results in dedicated tabs
     # -----------------------------------------------------------------------------
     tabs = st.tabs([
         "DEM & Flow Simulation", "Slope Map", "Aspect Map",
-        "Retention Time", "GeoTIFF Export",
-        "Nutrient Leaching", "Flow Accumulation", "Topographic Wetness Index",
-        "Curvature Analysis", "Scenario GIFs"
+        "Retention Time", "GeoTIFF Export", "Nutrient Leaching",
+        "Flow Accumulation", "TWI", "Curvature", "Vulnerability Index", "Scenario GIFs"
     ])
 
-    # Tab 0: DEM heatmap with flow simulation overlay
+    # Tab 0: DEM with Flow and Burned-Area Overlay
     with tabs[0]:
         with st.expander("DEM Legend Boundaries"):
             dem_vmin = st.number_input("DEM Minimum (m)", value=global_dem_min, step=1.0)
             dem_vmax = st.number_input("DEM Maximum (m)", value=global_dem_max, step=1.0)
-        st.subheader("DEM (Adjusted Elevation) with Flow Simulation")
+        st.subheader("DEM (Adjusted Elevation) with Flow Vectors and Burned-Area Overlay")
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax, aspect='auto')
+        # Overlay burned areas if available
+        if burned_mask is not None:
+            ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                      origin='lower', cmap='Reds', alpha=0.4)
+        # Flow vectors (sampled)
         step = max(1, global_grid_res // 20)
-        q = ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
-                      -dz_dx[::step, ::step], -dz_dy[::step, ::step],
-                      color='blue', scale=1e5, width=0.0025)
-        ax.set_title("DEM with Flow Overlay")
+        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
+                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+                  color='blue', scale=1e5, width=0.0025)
+        ax.set_title("DEM with Flow and Burned-Area Overlay")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Elevation (m)")
@@ -376,22 +424,6 @@ if uploaded_stl is not None:
     # Tab 4: GeoTIFF Export
     with tabs[4]:
         st.subheader("Export GeoTIFFs")
-        def export_geotiff(array, transform, crs="EPSG:4326"):
-            memfile = io.BytesIO()
-            with rasterio.io.MemoryFile() as memfile_obj:
-                with memfile_obj.open(
-                    driver="GTiff",
-                    height=array.shape[0],
-                    width=array.shape[1],
-                    count=1,
-                    dtype="float32",
-                    crs=crs,
-                    transform=transform,
-                ) as dataset:
-                    dataset.write(array.astype("float32"), 1)
-                memfile_obj.seek(0)
-                memfile.write(memfile_obj.read())
-            return memfile.getvalue()
         dem_tiff = export_geotiff(grid_z, transform)
         slope_tiff = export_geotiff(slope, transform)
         aspect_tiff = export_geotiff(aspect, transform)
@@ -413,11 +445,11 @@ if uploaded_stl is not None:
         with st.expander("Flow Accumulation Legend Boundaries"):
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
             flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(adjusted_flow_acc)), step=1.0)
-        st.subheader("Flow Accumulation Map")
+        st.subheader("Flow Accumulation Map (Adjusted for Burned Areas)")
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax, aspect='auto')
-        ax.set_title("Flow Accumulation (Adjusted for Burned Areas)")
+        ax.set_title("Flow Accumulation (Adjusted)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Accumulated Flow")
@@ -453,8 +485,23 @@ if uploaded_stl is not None:
         fig.colorbar(im, ax=ax, label="Curvature")
         st.pyplot(fig)
 
-    # Tab 9: Scenario GIFs
+    # Tab 9: Vulnerability Index Map
     with tabs[9]:
+        st.subheader("Composite Vulnerability Index")
+        fig, ax = plt.subplots(figsize=(6,4))
+        im = ax.imshow(vulnerability, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                       origin='lower', cmap='inferno', aspect='auto')
+        # Optionally, add contour lines where vulnerability exceeds a threshold
+        threshold = st.number_input("Vulnerability Threshold", value=float(np.percentile(vulnerability, 80)), step=0.01)
+        cs = ax.contour(vulnerability, levels=[threshold], colors='white', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        ax.set_title("Composite Vulnerability Index\n(Weighted Slope, TWI & Burned-Area)")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        fig.colorbar(im, ax=ax, label="Vulnerability")
+        st.pyplot(fig)
+
+    # Tab 10: Scenario GIFs
+    with tabs[10]:
         with st.expander("GIF Settings"):
             gif_frames = st.number_input("GIF Frames", value=10, step=1)
             gif_fps = st.number_input("GIF FPS", value=2, step=1)
