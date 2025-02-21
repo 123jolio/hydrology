@@ -125,7 +125,7 @@ veg_retention = st.sidebar.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05)
 erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
 # -----------------------------------------------------------------------------
-# NEW: Sidebar parameters for Slope Display and Burned Risk
+# Slope Map and Burned Risk parameters
 # -----------------------------------------------------------------------------
 st.sidebar.header("Slope Map Customization")
 slope_display_min = st.sidebar.number_input("Slope Display Minimum (°)", value=0.0, step=1.0)
@@ -144,7 +144,7 @@ risk_map = None       # Will hold risk map if burned area is provided
 burned_mask = None    # For later use in burned-area analysis
 
 if uploaded_stl is not None:
-    # Save STL to temporary file
+    # Save STL to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
         tmp_stl.write(uploaded_stl.read())
         stl_filename = tmp_stl.name
@@ -175,6 +175,7 @@ if uploaded_stl is not None:
     yi = np.linspace(top_bound, bottom_bound, global_grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
+    # Interpolate to create DEM
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, global_dem_min, global_dem_max)
 
@@ -182,8 +183,7 @@ if uploaded_stl is not None:
     dx = (right_bound - left_bound) / (global_grid_res - 1)
     dy = (top_bound - bottom_bound) / (global_grid_res - 1)
 
-    # --- Adjust slope calculation to account for geographic units ---
-    # Approximate conversion factors (meters per degree)
+    # Approximate conversion from degrees to meters
     avg_lat = (top_bound + bottom_bound) / 2.0
     meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
     meters_per_deg_lat = 111320  # roughly constant
@@ -191,11 +191,12 @@ if uploaded_stl is not None:
     dx_meters = dx * meters_per_deg_lon
     dy_meters = dy * meters_per_deg_lat
 
+    # Compute slope and aspect
     dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-    # Affine transform for GeoTIFF export
+    # Affine transform for GeoTIFF export (still in EPSG:4326 coords)
     transform = from_origin(left_bound, top_bound, dx, dy)
 
     # Flow Simulation
@@ -208,8 +209,10 @@ if uploaded_stl is not None:
     Q = np.zeros_like(t)
     for i, time in enumerate(t):
         if time <= event_duration:
+            # Rising limb
             Q[i] = Q_peak * (time / event_duration)
         else:
+            # Recession
             Q[i] = Q_peak * np.exp(-recession_rate * (time - event_duration))
 
     # Retention Time Calculation
@@ -218,51 +221,94 @@ if uploaded_stl is not None:
     # Nutrient Leaching Calculation
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
-    # Burned-Area Processing (if burned GeoTIFF is provided)
+    # -----------------------------------------------------------------------------
+    # 8. Burned-Area Processing (if burned GeoTIFF is provided)
+    # -----------------------------------------------------------------------------
     if uploaded_burned is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_burn:
             tmp_burn.write(uploaded_burned.read())
             burned_filename = tmp_burn.name
         try:
             with rasterio.open(burned_filename) as src:
-                burned_img = src.read()  # (bands, h, w)
+                # Read the burned raster data
+                burned_img = src.read()  # shape: (bands, height, width)
                 src_transform = src.transform
                 src_crs = src.crs
+                st.write("**Debug Info: Burned Raster**")
+                st.write(f"CRS: {src_crs}")
+                st.write(f"Bounds: {src.bounds}")
+                st.write(f"Shape: {burned_img.shape}")
+                # Print min/max for each band
+                for band_i in range(burned_img.shape[0]):
+                    band_min = burned_img[band_i].min()
+                    band_max = burned_img[band_i].max()
+                    st.write(f"Band {band_i}: min={band_min}, max={band_max}")
         except Exception as e:
             st.warning(f"Error reading burned GeoTIFF: {e}")
             burned_img = None
 
-        if burned_img is not None and burned_img.shape[0] >= 3:
-            # Create burned mask based on RGB thresholds
-            burned_mask = np.logical_and.reduce((
-                burned_img[0] >= 100, burned_img[0] <= 180,
-                burned_img[1] >= 200, burned_img[1] <= 255,
-                burned_img[2] >= 100, burned_img[2] <= 180
-            )).astype(np.uint8)
-            # Resample burned mask to DEM grid resolution
-            burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
-            reproject(
-                source=burned_mask,
-                destination=burned_mask_resampled,
-                src_transform=src_transform,
-                src_crs=src_crs,
-                dst_transform=transform,
-                dst_crs="EPSG:4326",
-                resampling=Resampling.nearest
-            )
-            # --- New Risk Map Calculation ---
-            # Normalize slope and DEM
-            norm_slope = (slope - np.min(slope)) / (np.max(slope) - np.min(slope) + 1e-9)
-            norm_dem = (grid_z - np.min(grid_z)) / (np.max(grid_z) - np.min(grid_z) + 1e-9)
-            # Use the burned mask as is (0 or 1) and define a normalized rain factor (constant over the domain)
-            norm_rain = (rainfall_intensity * event_duration) / 100.0  # adjust denominator as needed
-            # Compute a weighted risk map
-            risk_map = (risk_slope_weight * norm_slope +
-                        risk_dem_weight * norm_dem +
-                        risk_burned_weight * burned_mask_resampled +
-                        risk_rain_weight * norm_rain)
-            # Normalize risk map to 0-1
-            risk_map = (risk_map - np.min(risk_map)) / (np.max(risk_map) - np.min(risk_map) + 1e-9)
+        if burned_img is not None:
+            # We handle single-band or multi-band
+            if burned_img.shape[0] == 1:
+                # Example: single-band classification (0 = not burned, 1 = burned)
+                # Adjust threshold logic to match your data
+                single_band = burned_img[0]
+                # For example, treat values > 0.5 as burned
+                burned_mask = (single_band > 0.5).astype(np.uint8)
+
+            elif burned_img.shape[0] >= 3:
+                # Example: RGB-based threshold
+                # Adjust these thresholds to match your actual "burned color"
+                red_band   = burned_img[0]
+                green_band = burned_img[1]
+                blue_band  = burned_img[2]
+
+                burned_mask = np.logical_and.reduce((
+                    (red_band >= 100) & (red_band <= 180),
+                    (green_band >= 200) & (green_band <= 255),
+                    (blue_band >= 100) & (blue_band <= 180)
+                )).astype(np.uint8)
+            else:
+                st.warning("Unrecognized burned raster format (less than 1 band?).")
+                burned_mask = None
+
+            # If we have a valid burned_mask, reproject it
+            if burned_mask is not None:
+                burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
+                try:
+                    reproject(
+                        source=burned_mask,
+                        destination=burned_mask_resampled,
+                        src_transform=src_transform,
+                        src_crs=src_crs,
+                        dst_transform=transform,
+                        dst_crs="EPSG:4326",
+                        resampling=Resampling.nearest
+                    )
+                    burned_mask = burned_mask_resampled
+                except Exception as e:
+                    st.warning(f"Error reprojecting burned mask: {e}")
+                    burned_mask = None
+
+    # -----------------------------------------------------------------------------
+    # 9. Risk Map Calculation
+    # -----------------------------------------------------------------------------
+    if burned_mask is not None:
+        # Normalize slope and DEM
+        norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
+        norm_dem   = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
+
+        # Rain factor (constant for entire domain, but you could also vary it spatially)
+        norm_rain = (rainfall_intensity * event_duration) / 100.0  # arbitrary scale
+
+        # Weighted sum for risk
+        risk_map = (risk_slope_weight * norm_slope +
+                    risk_dem_weight   * norm_dem +
+                    risk_burned_weight * burned_mask +
+                    risk_rain_weight  * norm_rain)
+
+        # Normalize risk to [0, 1]
+        risk_map = (risk_map - risk_map.min()) / (risk_map.max() - risk_map.min() + 1e-9)
 
     # -----------------------------------------------------------------------------
     # Helper: Placeholder GIF creation function
@@ -286,13 +332,10 @@ if uploaded_stl is not None:
         gif_bytes.seek(0)
         return gif_bytes.getvalue()
 
-    # Create placeholder GIFs
+    # Create placeholder GIF data
     flow_placeholder = np.clip(grid_z / (np.max(grid_z) + 1e-9), 0, 1)
-    flow_gif = create_placeholder_gif(flow_placeholder, scenario_name="flow")
     retention_placeholder = np.clip(slope / (np.max(slope) + 1e-9), 0, 1)
-    retention_gif = create_placeholder_gif(retention_placeholder, scenario_name="retention")
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
-    nutrient_gif = create_placeholder_gif(nutrient_placeholder, scenario_name="nutrient")
     risk_gif = None
     if risk_map is not None:
         risk_placeholder = np.clip(risk_map, 0, 1)
@@ -351,14 +394,14 @@ if uploaded_stl is not None:
         fig.colorbar(im, ax=ax, label="Aspect (°)")
         st.pyplot(fig)
 
-    # ---- Burned Area Analysis Tab (New) ----
+    # ---- Burned Area Analysis Tab ----
     with tab8:
         st.subheader("Burned Area GeoTIFF & Analysis")
         if burned_mask is not None:
             # Calculate percent burned
             percent_burned = 100.0 * np.sum(burned_mask) / burned_mask.size
             st.write(f"Percent Burned Area: {percent_burned:.2f}%")
-            # Display the burned mask (use a colormap that highlights burned regions)
+            # Display the burned mask
             fig, ax = plt.subplots(figsize=(6,4))
             im = ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
                            origin='lower', cmap='gray', aspect='auto')
@@ -366,12 +409,13 @@ if uploaded_stl is not None:
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
             fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
-            # Compute boundaries via contouring
-            cs = ax.contour(burned_mask, levels=[0.5], colors='red', extent=(left_bound, right_bound, bottom_bound, top_bound))
+            # Compute boundary via contour
+            cs = ax.contour(burned_mask, levels=[0.5], colors='red',
+                            extent=(left_bound, right_bound, bottom_bound, top_bound))
             st.pyplot(fig)
             st.info("Red contour shows the boundary of the burned area.")
         else:
-            st.info("No burned-area data available for analysis.")
+            st.info("No burned-area data available for analysis or burned_mask is None.")
 
     # ---- Burned Risk Tab ----
     with tab9:
@@ -386,7 +430,7 @@ if uploaded_stl is not None:
             fig.colorbar(im, ax=ax, label="Risk Score (0-1)")
             st.pyplot(fig)
         else:
-            st.info("Burned risk map unavailable (no burned-area data).")
+            st.info("Burned risk map unavailable (no burned-area data or not calculated).")
 
     # ---- GeoTIFF Export Tab ----
     with tab6:
@@ -408,15 +452,21 @@ if uploaded_stl is not None:
                 memfile.write(memfile_obj.read())
             return memfile.getvalue()
 
+        # DEM, Slope, Aspect
         dem_tiff = export_geotiff(grid_z, transform)
         slope_tiff = export_geotiff(slope, transform)
         aspect_tiff = export_geotiff(aspect, transform)
+
         st.download_button("Download DEM (GeoTIFF)", dem_tiff, "DEM.tif", "image/tiff")
         st.download_button("Download Slope (GeoTIFF)", slope_tiff, "Slope.tif", "image/tiff")
         st.download_button("Download Aspect (GeoTIFF)", aspect_tiff, "Aspect.tif", "image/tiff")
+
+        # Burned Mask
         if burned_mask is not None:
             burned_tiff = export_geotiff(burned_mask.astype("float32"), transform)
             st.download_button("Download Burned Area Mask (GeoTIFF)", burned_tiff, "BurnedArea.tif", "image/tiff")
+
+        # Risk Map
         if risk_map is not None:
             risk_tiff = export_geotiff(risk_map, transform)
             st.download_button("Download Risk (GeoTIFF)", risk_tiff, "RiskMap.tif", "image/tiff")
