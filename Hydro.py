@@ -140,8 +140,8 @@ risk_rain_weight = st.sidebar.slider("Rain Weight", 0.0, 2.0, 1.0, 0.1)
 # -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
 # -----------------------------------------------------------------------------
-risk_map = None  # Will hold risk map if burned area is provided
-burned_mask = None  # For later use in burned-area analysis
+risk_map = None       # Will hold risk map if burned area is provided
+burned_mask = None    # For later use in burned-area analysis
 
 if uploaded_stl is not None:
     # Save STL to temporary file
@@ -182,8 +182,16 @@ if uploaded_stl is not None:
     dx = (right_bound - left_bound) / (global_grid_res - 1)
     dy = (top_bound - bottom_bound) / (global_grid_res - 1)
 
-    # Compute slope and aspect
-    dz_dx, dz_dy = np.gradient(grid_z, dx, dy)
+    # --- Adjust slope calculation to account for geographic units ---
+    # Approximate conversion factors (meters per degree)
+    avg_lat = (top_bound + bottom_bound) / 2.0
+    meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
+    meters_per_deg_lat = 111320  # roughly constant
+
+    dx_meters = dx * meters_per_deg_lon
+    dy_meters = dy * meters_per_deg_lat
+
+    dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
@@ -252,7 +260,7 @@ if uploaded_stl is not None:
             risk_map = (risk_slope_weight * norm_slope +
                         risk_dem_weight * norm_dem +
                         risk_burned_weight * burned_mask_resampled +
-                        risk_rain_weight * norm_rain) 
+                        risk_rain_weight * norm_rain)
             # Normalize risk map to 0-1
             risk_map = (risk_map - np.min(risk_map)) / (np.max(risk_map) - np.min(risk_map) + 1e-9)
 
