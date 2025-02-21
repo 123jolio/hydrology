@@ -70,9 +70,8 @@ except Exception:
 
 st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
-This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect), 
-overlays a flow simulation on the DEM, estimates retention time, nutrient leaching, and computes additional terrain derivatives 
-(flow accumulation, topographic wetness index, and curvature).  
+This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect). It overlays a flow simulation on the DEM, estimates retention time and nutrient leaching, and computes additional terrain derivatives (flow accumulation, topographic wetness index (TWI), and curvature).  
+If a burned‐area TIFF file is provided—with red regions indicating burned and white indicating non‐burned areas—its effect on the hydrological response is incorporated (reduced infiltration and increased surface runoff).  
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
@@ -85,12 +84,13 @@ right_bound = 28.045764
 bottom_bound = 36.133509
 
 # -----------------------------------------------------------------------------
-# 5. File upload: STL file (burned area upload removed)
+# 5. File upload: STL file and burned‐area TIFF file
 # -----------------------------------------------------------------------------
 uploaded_stl = st.file_uploader("Upload STL file (for DEM)", type=["stl"])
+uploaded_burned = st.file_uploader("Upload Burned-Area Data (TIFF)", type=["tif", "tiff"])
 
 # -----------------------------------------------------------------------------
-# 6. Global Processing Parameters (remain in the sidebar)
+# 6. Global Processing Parameters (in the sidebar)
 # -----------------------------------------------------------------------------
 st.sidebar.header("Processing Parameters")
 global_scale = st.sidebar.slider("Global Elevation Scale Factor", 0.1, 5.0, 1.0, 0.1)
@@ -112,6 +112,9 @@ st.sidebar.header("Nutrient Leaching")
 soil_nutrient = st.sidebar.number_input("Soil Nutrient (kg/ha)", value=50.0, step=1.0)
 veg_retention = st.sidebar.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05)
 erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
+
+st.sidebar.header("Burned Area Effects")
+burn_runoff_factor = st.sidebar.slider("Burned Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1)
 
 # -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
@@ -179,7 +182,54 @@ if uploaded_stl is not None:
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
-    # 8. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
+    # 8. Burned-Area Processing (TIFF)
+    # -----------------------------------------------------------------------------
+    burned_mask = None
+    if uploaded_burned is not None:
+        ext = os.path.splitext(uploaded_burned.name)[1].lower()
+        if ext in [".tif", ".tiff"]:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_tif:
+                    tmp_tif.write(uploaded_burned.read())
+                    tif_filename = tmp_tif.name
+                with rasterio.open(tif_filename) as src:
+                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
+                    burned_img_raw = src.read()
+                    src_transform = src.transform
+                    # If the image has multiple bands, assume it is a color image.
+                    # We interpret burned areas as those where the red channel is high while green and blue are low.
+                    if burned_img_raw.shape[0] >= 3:
+                        red = burned_img_raw[0]
+                        green = burned_img_raw[1]
+                        blue = burned_img_raw[2]
+                        # Create a binary mask: burned if red > 150 and green and blue below 100.
+                        burned_mask_raw = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
+                    else:
+                        # Otherwise, assume a single band where higher values indicate burned.
+                        # Normalize and then threshold (e.g., > 0.5 after normalization).
+                        band = burned_img_raw[0]
+                        norm_band = (band - band.min()) / (band.max() - band.min() + 1e-9)
+                        burned_mask_raw = (norm_band > 0.5).astype(np.float32)
+                    burned_mask_resampled = np.empty(grid_z.shape, dtype=np.float32)
+                    reproject(
+                        source=burned_mask_raw,
+                        destination=burned_mask_resampled,
+                        src_transform=src_transform,
+                        src_crs=src_crs,
+                        dst_transform=transform,
+                        dst_crs="EPSG:4326",
+                        resampling=Resampling.nearest
+                    )
+                    burned_mask = burned_mask_resampled
+            except Exception as e:
+                st.warning(f"Error reading burned TIFF: {e}")
+                burned_mask = None
+        else:
+            st.warning("Please upload a TIFF file for burned-area analysis.")
+            burned_mask = None
+
+    # -----------------------------------------------------------------------------
+    # 9. Additional Terrain Derivatives: Flow Accumulation, TWI, and Curvature
     # -----------------------------------------------------------------------------
     def compute_flow_accumulation(dem):
         acc = np.ones_like(dem)
@@ -205,19 +255,24 @@ if uploaded_stl is not None:
         return acc
 
     flow_acc = compute_flow_accumulation(grid_z)
+    # Incorporate burned-area effects on flow accumulation:
+    if burned_mask is not None:
+        # In burned areas, increase the effective contributing area
+        adjusted_flow_acc = flow_acc * (1 + burn_runoff_factor * burned_mask)
+    else:
+        adjusted_flow_acc = flow_acc
+
     slope_radians = np.radians(slope)
     cell_area = dx_meters * dy_meters
-    # -----------------------------------------------------------------------------
-    # Modified TWI Calculation:
-    # Using: TWI = ln(((flow_acc + 1) * cell_area) / (tan(slope_radians) + 0.001))
-    # -----------------------------------------------------------------------------
-    twi = np.log(((flow_acc + 1) * cell_area) / (np.tan(slope_radians) + 0.001))
+    # Modified TWI Calculation using adjusted flow accumulation:
+    # TWI = ln(((adjusted_flow_acc + 1) * cell_area) / (tan(slope_radians) + 0.001))
+    twi = np.log(((adjusted_flow_acc + 1) * cell_area) / (np.tan(slope_radians) + 0.001))
     d2z_dx2 = np.gradient(dz_dx, dx_meters, axis=1)
     d2z_dy2 = np.gradient(dz_dy, dy_meters, axis=0)
     curvature = d2z_dx2 + d2z_dy2
 
     # -----------------------------------------------------------------------------
-    # 9. Helper: Placeholder GIF creation function
+    # 10. Helper: Placeholder GIF creation function
     # -----------------------------------------------------------------------------
     def create_placeholder_gif(data_array, frames=10, fps=2, scenario_name="flow"):
         images = []
@@ -243,7 +298,7 @@ if uploaded_stl is not None:
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
 
     # -----------------------------------------------------------------------------
-    # 10. Display results in dedicated tabs
+    # 11. Display results in dedicated tabs
     # -----------------------------------------------------------------------------
     tabs = st.tabs([
         "DEM & Flow Simulation", "Slope Map", "Aspect Map",
@@ -350,16 +405,16 @@ if uploaded_stl is not None:
         st.write(f"Catchment Area: {catchment_area} ha")
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    # Tab 6: Flow Accumulation Map
+    # Tab 6: Flow Accumulation Map (using adjusted_flow_acc)
     with tabs[6]:
         with st.expander("Flow Accumulation Legend Boundaries"):
-            flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(flow_acc)), step=1.0)
-            flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(flow_acc)), step=1.0)
+            flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
+            flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(adjusted_flow_acc)), step=1.0)
         st.subheader("Flow Accumulation Map")
         fig, ax = plt.subplots(figsize=(6,4))
-        im = ax.imshow(flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
+        im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax, aspect='auto')
-        ax.set_title("Flow Accumulation (D8)")
+        ax.set_title("Flow Accumulation (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Accumulated Flow")
@@ -374,7 +429,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(twi, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax, aspect='auto')
-        ax.set_title("TWI")
+        ax.set_title("TWI (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="TWI")
