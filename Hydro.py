@@ -252,6 +252,8 @@ if uploaded_stl is not None:
                     tmp_tif.write(uploaded_burned.read())
                     tif_filename = tmp_tif.name
                 with rasterio.open(tif_filename) as src:
+                    # If src.crs is missing, assume EPSG:4326
+                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     burned_img = src.read(1)
                     src_transform = src.transform
                     burned_mask_temp = (burned_img > 128).astype(np.uint8)
@@ -260,7 +262,7 @@ if uploaded_stl is not None:
                         source=burned_mask_temp,
                         destination=burned_mask_resampled,
                         src_transform=src_transform,
-                        src_crs=src.crs,
+                        src_crs=src_crs,
                         dst_transform=transform,
                         dst_crs="EPSG:4326",
                         resampling=Resampling.nearest
