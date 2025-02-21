@@ -38,22 +38,23 @@ if not os.path.exists(lake_kmz_path):
 
 def extract_kml_from_kmz(kmz_path):
     """
-    Extracts the first KML file found within the KMZ archive and returns its path.
+    Extracts the first KML file found within the KMZ archive to a temporary directory
+    (which is not automatically deleted) and returns its path.
     """
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        try:
-            with zipfile.ZipFile(kmz_path, 'r') as kmz:
-                kmz.extractall(tmpdirname)
-        except Exception as e:
-            st.error(f"Error extracting KMZ file {kmz_path}: {e}")
-            st.stop()
-        # Look for a file ending with .kml (case-insensitive)
-        kml_files = [f for f in os.listdir(tmpdirname) if f.lower().endswith('.kml')]
-        if not kml_files:
-            st.error(f"No KML file found inside the KMZ: {kmz_path}")
-            st.stop()
-        # Return the full path of the first KML file found
-        return os.path.join(tmpdirname, kml_files[0])
+    tmpdirname = tempfile.mkdtemp()  # persistent temporary directory
+    try:
+        with zipfile.ZipFile(kmz_path, 'r') as kmz:
+            kmz.extractall(tmpdirname)
+    except Exception as e:
+        st.error(f"Error extracting KMZ file {kmz_path}: {e}")
+        st.stop()
+    # Look for a file ending with .kml (case-insensitive)
+    kml_files = [f for f in os.listdir(tmpdirname) if f.lower().endswith('.kml')]
+    if not kml_files:
+        st.error(f"No KML file found inside the KMZ: {kmz_path}")
+        st.stop()
+    # Return the full path of the first KML file found
+    return os.path.join(tmpdirname, kml_files[0])
 
 # Extract the KML file paths from each KMZ
 contour_kml_path = extract_kml_from_kmz(contour_kmz_path)
