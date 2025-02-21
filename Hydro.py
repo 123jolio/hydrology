@@ -8,70 +8,43 @@ import io
 import rasterio
 from rasterio.transform import from_origin
 
-# -----------------------------------------------------------------------------
-# Page configuration and header with logo
-# -----------------------------------------------------------------------------
-st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
+# --- Page Configuration & Logo ---
+st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide")
 try:
     st.image("logo.png", width=200)
 except Exception:
     st.write("Logo file not found.")
 
-st.title("Advanced Hydrogeology & DEM Analysis")
+st.title("Hydrogeology & DEM Analysis")
 st.markdown("""
-This application generates a high-quality Digital Elevation Model (DEM) from an STL file, computes advanced hydrogeological maps (slope and aspect), simulates a runoff hydrograph, and calculates a retention time estimate.  
-All outputs can be exported as georeferenced GeoTIFF files.  
+This application performs DEM generation from an STL file with adjustable elevation parameters,
+computes slope and aspect maps, and provides options to export the resulting products as GeoTIFF files.
 """)
 
-# -----------------------------------------------------------------------------
-# Georeference (bounding box) for the DEM products (EPSG:4326)
-# (Coordinates extracted from the image)
-# -----------------------------------------------------------------------------
-left_bound = 27.906069      # Longitude (Top left)
-top_bound = 36.92337189       # Latitude (Top left)
-right_bound = 28.045764       # Longitude (Bottom right)
-bottom_bound = 36.133509      # Latitude (Bottom right)
+# --- User-provided Georeference (Bounding Box) ---
+# These coordinates are used to georeference the DEM.
+# (Assumed from the extracted image coordinates)
+left_bound = 27.906069
+top_bound = 36.92337189
+right_bound = 28.045764
+bottom_bound = 36.133509
 
-# -----------------------------------------------------------------------------
-# File upload (STL file)
-# -----------------------------------------------------------------------------
+# --- File Upload ---
 uploaded_file = st.file_uploader("Upload your STL file", type=["stl"])
 
-# -----------------------------------------------------------------------------
-# Sidebar: DEM and Elevation Adjustment Parameters
-# -----------------------------------------------------------------------------
+# --- Sidebar: DEM & Elevation Adjustment ---
 st.sidebar.header("DEM & Elevation Adjustment")
-scale_factor = st.sidebar.slider("Raw Elevation Scale Factor", 0.1, 5.0, 1.0, 0.1,
-                                 help="Multiply the raw elevation values by this factor")
-elevation_offset = st.sidebar.slider("Raw Elevation Offset (m)", -100.0, 100.0, 0.0, 1.0,
-                                     help="Add this offset to all raw elevation values")
+scale_factor = st.sidebar.slider("Raw Elevation Scale Factor", 0.1, 5.0, 1.0, 0.1)
+elevation_offset = st.sidebar.slider("Raw Elevation Offset", -100.0, 100.0, 0.0, 1.0)
 st.sidebar.header("DEM Clipping")
 dem_min = st.sidebar.number_input("DEM Minimum Elevation (m)", value=0.0, step=1.0)
 dem_max = st.sidebar.number_input("DEM Maximum Elevation (m)", value=400.0, step=1.0)
 grid_res = st.sidebar.number_input("Grid Resolution", 100, 1000, 500, 50)
 
-# -----------------------------------------------------------------------------
-# Sidebar: Flow Simulation Parameters
-# -----------------------------------------------------------------------------
-st.sidebar.header("Flow Simulation Parameters")
-rainfall_intensity = st.sidebar.number_input("Rainfall Intensity (mm/hr)", value=30.0, step=1.0)
-event_duration = st.sidebar.number_input("Rainfall Event Duration (hr)", value=2.0, step=0.1)
-catchment_area = st.sidebar.number_input("Catchment Area (ha)", value=10.0, step=0.1)
-runoff_coefficient = st.sidebar.slider("Runoff Coefficient", 0.0, 1.0, 0.5, 0.05)
-recession_rate = st.sidebar.number_input("Recession Rate (1/hr)", value=0.5, step=0.1)
-simulation_duration = st.sidebar.number_input("Hydrograph Simulation Duration (hr)", value=6.0, step=0.5)
+# --- Additional Hydro Tools (Flow simulation, retention, etc.) can be added here later ---
 
-# -----------------------------------------------------------------------------
-# Sidebar: Retention Time Parameter
-# -----------------------------------------------------------------------------
-st.sidebar.header("Retention Time Parameters")
-storage_volume = st.sidebar.number_input("Storage Volume (m³)", value=5000.0, step=100.0)
-
-# -----------------------------------------------------------------------------
-# Process STL file and generate DEM & Hydro Maps
-# -----------------------------------------------------------------------------
 if uploaded_file is not None:
-    # Save the uploaded STL file to a temporary file
+    # Save STL to temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_file:
         tmp_file.write(uploaded_file.read())
         stl_filename = tmp_file.name
@@ -82,75 +55,43 @@ if uploaded_file is not None:
         st.error(f"Error reading STL file: {e}")
         st.stop()
 
-    # Extract vertices from the STL mesh (each triangle has 3 vertices)
+    # Extract vertices from the mesh
     vertices = stl_mesh.vectors.reshape(-1, 3)
     x_raw = vertices[:, 0]
     y_raw = vertices[:, 1]
     z_raw = vertices[:, 2]
 
-    # Apply raw elevation adjustments (scale and offset)
+    # Apply raw elevation adjustments
     z_adj = (z_raw * scale_factor) + elevation_offset
 
-    # Create a georeferenced grid using the provided bounding box
+    # Instead of using the raw x,y extents, we force the georeferenced extent using the provided bounding box.
+    # Create grid over the bounding box.
     xi = np.linspace(left_bound, right_bound, grid_res)
-    yi = np.linspace(top_bound, bottom_bound, grid_res)  # From high (top) to low (bottom)
+    yi = np.linspace(top_bound, bottom_bound, grid_res)  # note: from top (high lat) to bottom (low lat)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
-    # Interpolate the adjusted elevation values onto the grid using cubic interpolation
+    # Interpolate the adjusted z-values onto the grid
+    # (We use the raw x,y positions from the STL, but the output grid is forced to our bounding box)
     grid_z = griddata((x_raw, y_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
-    # Determine grid spacing (approximation in degrees for small extents)
+    # --- Compute Hydrogeological Parameters ---
+    # Calculate grid spacing using our defined bounds
     pixel_width = (right_bound - left_bound) / (grid_res - 1)
     pixel_height = (top_bound - bottom_bound) / (grid_res - 1)
-
-    # Compute gradients to derive slope and aspect
+    # Compute gradients (assumes uniform spacing)
     dz_dx, dz_dy = np.gradient(grid_z, pixel_width, pixel_height)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx))
     aspect = (aspect + 360) % 360
 
-    # Define affine transform for GeoTIFF export (upper-left corner, pixel size)
-    transform = from_origin(left_bound, top_bound, pixel_width, pixel_height)
+    # Define affine transform for the GeoTIFF (upper-left corner, pixel size)
+    transform = from_origin(left_bound, top_bound, pixel_width, pixel_height)  # note: pixel_height positive here
 
-    # -----------------------------------------------------------------------------
-    # Flow Simulation (Advanced Hydrograph)
-    # -----------------------------------------------------------------------------
-    # Convert catchment area from hectares to m²
-    area_m2 = catchment_area * 10000.0
-    # Total rainfall depth (m) over the event duration
-    total_rain_m = (rainfall_intensity / 1000.0) * event_duration
-    # Effective runoff volume (m³) using the runoff coefficient
-    V_runoff = total_rain_m * area_m2 * runoff_coefficient
-    # Approximate peak flow (m³/hr) using a unit hydrograph concept:
-    # Here, we approximate Q_peak as the average runoff rate during the event.
-    Q_peak = V_runoff / event_duration
-
-    # Build a more professional hydrograph:
-    # - A rising limb: assume linear increase from 0 to Q_peak over the event duration.
-    # - A recession limb: assume an exponential decay after the event.
-    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))  # time in hours (with minute resolution)
-    Q = np.zeros_like(t)
-    for i, time in enumerate(t):
-        if time <= event_duration:
-            Q[i] = Q_peak * (time / event_duration)
-        else:
-            Q[i] = Q_peak * np.exp(-recession_rate * (time - event_duration))
-
-    # -----------------------------------------------------------------------------
-    # Retention Time Calculation (Using effective runoff)
-    # -----------------------------------------------------------------------------
-    # Average runoff rate (m³/hr) is approximated as V_runoff / event_duration.
-    if V_runoff > 0:
-        retention_time = storage_volume / (V_runoff / event_duration)
-    else:
-        retention_time = None
-
-    # -----------------------------------------------------------------------------
-    # Function to export arrays as GeoTIFF using rasterio
-    # -----------------------------------------------------------------------------
+    # --- Function to export a GeoTIFF into a BytesIO object ---
     def export_geotiff(array, transform, crs="EPSG:4326"):
         memfile = io.BytesIO()
+        # Write single band float32 GeoTIFF
         with rasterio.io.MemoryFile() as memfile_obj:
             with memfile_obj.open(
                 driver="GTiff",
@@ -166,13 +107,8 @@ if uploaded_file is not None:
             memfile.write(memfile_obj.read())
         return memfile.getvalue()
 
-    # -----------------------------------------------------------------------------
-    # Display results in multiple tabs
-    # -----------------------------------------------------------------------------
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "DEM Heatmap", "Slope Map", "Aspect Map",
-        "Flow Simulation", "Retention Time", "Export GeoTIFFs"
-    ])
+    # --- Visualization and Download Tabs ---
+    tab1, tab2, tab3 = st.tabs(["DEM Heatmap", "Slope Map", "Aspect Map"])
 
     with tab1:
         st.subheader("DEM Heatmap")
@@ -185,6 +121,10 @@ if uploaded_file is not None:
         fig.colorbar(im, ax=ax, label="Elevation (m)")
         st.pyplot(fig)
 
+        # Button to download DEM as GeoTIFF
+        dem_tiff = export_geotiff(grid_z, transform)
+        st.download_button("Download DEM GeoTIFF", dem_tiff, file_name="DEM.tif", mime="image/tiff")
+
     with tab2:
         st.subheader("Slope Map")
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -195,6 +135,9 @@ if uploaded_file is not None:
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Slope (°)")
         st.pyplot(fig)
+
+        slope_tiff = export_geotiff(slope, transform)
+        st.download_button("Download Slope GeoTIFF", slope_tiff, file_name="Slope.tif", mime="image/tiff")
 
     with tab3:
         st.subheader("Aspect Map")
@@ -207,31 +150,7 @@ if uploaded_file is not None:
         fig.colorbar(im, ax=ax, label="Aspect (°)")
         st.pyplot(fig)
 
-    with tab4:
-        st.subheader("Flow Simulation Hydrograph")
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(t, Q, color="blue", lw=2)
-        ax.set_title("Simulated Runoff Hydrograph")
-        ax.set_xlabel("Time (hours)")
-        ax.set_ylabel("Flow (m³/hr)")
-        st.pyplot(fig)
-        st.markdown(f"**Peak Flow:** {Q_peak:.2f} m³/hr")
-        st.markdown(f"**Total Runoff Volume:** {V_runoff:.2f} m³")
-
-    with tab5:
-        st.subheader("Retention Time Calculation")
-        if retention_time is not None:
-            st.markdown(f"**Estimated Retention Time:** {retention_time:.2f} hours")
-        else:
-            st.warning("Effective runoff is zero; please check your input parameters.")
-
-    with tab6:
-        st.subheader("Export GeoTIFF Products")
-        dem_tiff = export_geotiff(grid_z, transform)
-        slope_tiff = export_geotiff(slope, transform)
         aspect_tiff = export_geotiff(aspect, transform)
-        st.download_button("Download DEM GeoTIFF", dem_tiff, file_name="DEM.tif", mime="image/tiff")
-        st.download_button("Download Slope GeoTIFF", slope_tiff, file_name="Slope.tif", mime="image/tiff")
         st.download_button("Download Aspect GeoTIFF", aspect_tiff, file_name="Aspect.tif", mime="image/tiff")
 else:
-    st.info("Please upload an STL file to generate the hydrogeological maps and analyses.")
+    st.info("Please upload an STL file to generate the hydrogeological maps and export options.")
