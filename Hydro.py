@@ -1,6 +1,7 @@
 import os
 import zipfile
 import tempfile
+import glob
 import geopandas as gpd
 import numpy as np
 from scipy.interpolate import griddata
@@ -8,18 +9,22 @@ import matplotlib.pyplot as plt
 from affine import Affine
 from pysheds.grid import Grid
 import streamlit as st
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 # Page configuration
 st.set_page_config(page_title="Hydrological Analysis", layout="wide")
 st.title("Hydrological Analysis")
 st.markdown("""
-This application creates a DEM from contour lines contained in a KMZ file, performs hydrological processing (sink filling, flow direction, accumulation), extracts the stream network, and delineates the watershed draining to a lake.
+This application creates a DEM from contour lines contained in a KMZ file,
+performs hydrological processing (sink filling, flow direction, accumulation),
+extracts the stream network, and delineates the watershed draining to a lake.
 """)
 
 # Get the directory of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Define the expected KMZ file paths
+# Define the expected KMZ file names
 contour_kmz_path = os.path.join(script_dir, "Model_25m.kmz")
 lake_kmz_path = os.path.join(script_dir, "Lake Polygon.kmz")
 
@@ -31,10 +36,9 @@ if not os.path.exists(lake_kmz_path):
     st.error(f"Lake KMZ file not found: {lake_kmz_path}")
     st.stop()
 
-def load_gdf_from_kmz(kmz_path):
+def extract_kml_from_kmz(kmz_path):
     """
-    Extracts the first KML file found within the KMZ archive,
-    reads it into a GeoDataFrame, and returns the GeoDataFrame.
+    Extracts the first KML file found within the KMZ archive and returns its path.
     """
     with tempfile.TemporaryDirectory() as tmpdirname:
         try:
@@ -48,28 +52,74 @@ def load_gdf_from_kmz(kmz_path):
         if not kml_files:
             st.error(f"No KML file found inside the KMZ: {kmz_path}")
             st.stop()
-        kml_path = os.path.join(tmpdirname, kml_files[0])
-        try:
-            gdf = gpd.read_file(kml_path, driver='KML')
-        except Exception as e:
-            st.error(f"Error reading file {kml_path}: {e}")
-            st.stop()
-        return gdf
+        # Return the full path of the first KML file found
+        return os.path.join(tmpdirname, kml_files[0])
 
-# Load the GeoDataFrames from the KMZ files
-gdf_contours = load_gdf_from_kmz(contour_kmz_path)
-gdf_lake = load_gdf_from_kmz(lake_kmz_path)
+# Extract the KML file paths from each KMZ
+contour_kml_path = extract_kml_from_kmz(contour_kmz_path)
+lake_kml_path = extract_kml_from_kmz(lake_kmz_path)
 
-# Filter for contour lines in the contours dataset (LineString or MultiLineString)
-contours = gdf_contours[gdf_contours.geometry.type.isin(['LineString', 'MultiLineString'])]
-# Filter for lake polygons in the lake dataset (Polygon or MultiPolygon)
-lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
-
-if lakes.empty:
-    st.error("No lake polygon found in the lake KMZ.")
+# Read the extracted KML files using GeoPandas
+try:
+    gdf_contours = gpd.read_file(contour_kml_path, driver='KML')
+except Exception as e:
+    st.error(f"Error reading contours from KMZ: {e}")
+    st.stop()
+try:
+    gdf_lake = gpd.read_file(lake_kml_path, driver='KML')
+except Exception as e:
+    st.error(f"Error reading lake polygon from KMZ: {e}")
     st.stop()
 
-# Extract contour points and elevation values
+# Debug: Show available geometry types in the lake file
+st.write("Lake file geometry types:", gdf_lake.geometry.geom_type.unique())
+
+# Filter for contour lines in the contours dataset
+contours = gdf_contours[gdf_contours.geometry.type.isin(['LineString', 'MultiLineString'])]
+
+# Filter for lake polygons in the lake dataset
+lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+
+# If no polygons are found, attempt to convert closed lines into polygons
+if lakes.empty:
+    st.warning("No lake polygon found. Attempting to convert closed lines to polygons.")
+    
+    def is_closed_line(line):
+        coords = list(line.coords)
+        return coords[0] == coords[-1]
+
+    def linestring_to_polygon(linestring):
+        if is_closed_line(linestring):
+            return Polygon(linestring.coords)
+        return linestring
+
+    def multilinestring_to_polygon(multilinestring):
+        polygons = []
+        for line in multilinestring.geoms:
+            if is_closed_line(line):
+                polygons.append(Polygon(line.coords))
+        if polygons:
+            if len(polygons) == 1:
+                return polygons[0]
+            else:
+                return unary_union(polygons)
+        return multilinestring
+
+    def convert_geometry(geom):
+        if geom.type == 'LineString':
+            return linestring_to_polygon(geom)
+        elif geom.type == 'MultiLineString':
+            return multilinestring_to_polygon(geom)
+        return geom
+
+    gdf_lake['geometry'] = gdf_lake['geometry'].apply(convert_geometry)
+    lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+
+if lakes.empty:
+    st.error("No lake polygon found in the lake KMZ even after conversion attempt.")
+    st.stop()
+
+# Extract contour points and elevations from the contours dataset
 points = []
 values = []
 for idx, row in contours.iterrows():
@@ -173,7 +223,7 @@ with tab3:
     st.subheader("Stream Network")
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(streams, cmap='Blues')
-    ax.set_title("Extracted Streams (Threshold = {})".format(threshold))
+    ax.set_title(f"Extracted Streams (Threshold = {threshold})")
     plt.colorbar(im, ax=ax)
     st.pyplot(fig)
 
