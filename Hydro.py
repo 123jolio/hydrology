@@ -217,6 +217,7 @@ if uploaded_stl is not None:
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, global_dem_min, global_dem_max)
 
+    # --- Compute grid spacing in meters ---
     dx = (right_bound - left_bound) / (global_grid_res - 1)
     dy = (top_bound - bottom_bound) / (global_grid_res - 1)
     avg_lat = (top_bound + bottom_bound) / 2.0
@@ -225,6 +226,7 @@ if uploaded_stl is not None:
     dx_meters = dx * meters_per_deg_lon
     dy_meters = dy * meters_per_deg_lat
 
+    # --- Compute terrain derivatives ---
     dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
@@ -236,7 +238,8 @@ if uploaded_stl is not None:
     V_runoff = total_rain_m * area_m2 * runoff_coeff
     Q_peak = V_runoff / event_duration
     t = np.linspace(0, simulation_hours, int(simulation_hours * 60))
-    Q = np.array([Q_peak * (time/event_duration) if time<= event_duration else Q_peak * np.exp(-recession_rate*(time-event_duration))
+    Q = np.array([Q_peak * (time/event_duration) if time<= event_duration 
+                  else Q_peak * np.exp(-recession_rate*(time-event_duration)) 
                   for time in t])
     retention_time = storage_volume / (V_runoff / event_duration) if V_runoff > 0 else None
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
@@ -296,7 +299,7 @@ if uploaded_stl is not None:
     curvature = convolve(grid_z, laplacian_kernel, mode='reflect')
     vulnerability = compute_vulnerability(slope, twi, burned_mask, weight_slope, weight_twi, weight_burned)
 
-    # --- Placeholder GIFs ---
+    # --- Placeholder GIFs for demonstration ---
     flow_placeholder = np.clip(grid_z / (np.max(grid_z) + 1e-9), 0, 1)
     retention_placeholder = np.clip(slope / (np.max(slope) + 1e-9), 0, 1)
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
@@ -310,23 +313,30 @@ if uploaded_stl is not None:
         "TWI", "Curvature", "Vulnerability", "Scenario GIFs"
     ])
 
-    # --- Tab 0: DEM & Flow with Burn Overlay ---
+    # --- Tab 0: DEM & Flow with Burned-Area Overlay ---
     with tabs[0]:
         st.subheader("DEM with Flow & Burned-Area Overlay")
         with st.expander("DEM Settings"):
-            dem_vmin = st.number_input("DEM Min (m)", value=global_dem_min, step=1.0)
-            dem_vmax = st.number_input("DEM Max (m)", value=global_dem_max, step=1.0)
+            dem_vmin = st.number_input("DEM Minimum (m)", value=global_dem_min, step=1.0)
+            dem_vmax = st.number_input("DEM Maximum (m)", value=global_dem_max, step=1.0)
         fig, ax = plt.subplots(figsize=(8,5))
+        # Plot DEM
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax)
+        # If burned mask exists, normalize it and overlay
         if burned_mask is not None:
-            ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
+            burned_norm = (burned_mask - burned_mask.min()) / (burned_mask.max() - burned_mask.min() + 1e-9)
+            ax.imshow(burned_norm, extent=(left_bound, right_bound, bottom_bound, top_bound),
                       origin='lower', cmap='Reds', alpha=0.4)
+            # Optional contour outlining burned areas
+            ax.contour(burned_norm, levels=[0.5], colors='darkred',
+                       extent=(left_bound, right_bound, bottom_bound, top_bound))
+        # Plot flow vectors
         step = max(1, global_grid_res // 20)
         ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                   -dz_dx[::step, ::step], -dz_dy[::step, ::step],
                   color='blue', scale=1e5, width=0.003)
-        ax.set_title("DEM with Flow Vectors and Burn Overlay", fontsize=14, fontweight='bold')
+        ax.set_title("DEM with Flow Vectors and Burned-Area Overlay", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Elevation (m)")
@@ -336,8 +346,8 @@ if uploaded_stl is not None:
     with tabs[1]:
         st.subheader("Slope Map")
         with st.expander("Slope Settings"):
-            slope_vmin = st.number_input("Slope Min (°)", value=0.0, step=1.0)
-            slope_vmax = st.number_input("Slope Max (°)", value=70.0, step=1.0)
+            slope_vmin = st.number_input("Slope Minimum (°)", value=0.0, step=1.0)
+            slope_vmax = st.number_input("Slope Maximum (°)", value=70.0, step=1.0)
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno", "magma"])
         fig, ax = plt.subplots(figsize=(8,5))
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
@@ -352,8 +362,8 @@ if uploaded_stl is not None:
     with tabs[2]:
         st.subheader("Aspect Map")
         with st.expander("Aspect Settings"):
-            aspect_vmin = st.number_input("Aspect Min (°)", value=0.0, step=1.0)
-            aspect_vmax = st.number_input("Aspect Max (°)", value=360.0, step=1.0)
+            aspect_vmin = st.number_input("Aspect Minimum (°)", value=0.0, step=1.0)
+            aspect_vmax = st.number_input("Aspect Maximum (°)", value=360.0, step=1.0)
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv", "cool"])
         fig, ax = plt.subplots(figsize=(8,5))
         im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
@@ -444,7 +454,8 @@ if uploaded_stl is not None:
         im = ax.imshow(vulnerability, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='inferno')
         threshold = st.number_input("Vulnerability Threshold", value=float(np.percentile(vulnerability, 80)), step=0.01)
-        ax.contour(vulnerability, levels=[threshold], colors='white', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        ax.contour(vulnerability, levels=[threshold], colors='white',
+                   extent=(left_bound, right_bound, bottom_bound, top_bound))
         ax.set_title("Vulnerability (Weighted Slope, TWI & Burned-Area)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
