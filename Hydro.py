@@ -13,6 +13,8 @@ import imageio  # for GIF creation
 import matplotlib.contour as contour  # for boundary extraction
 import zipfile
 from fastkml import kml
+import os
+from PIL import Image
 
 # -----------------------------------------------------------------------------
 # 1. MUST be the very first Streamlit command!
@@ -25,14 +27,11 @@ st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wi
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
 <style>
-/* Overall background and font */
 html, body {
     background-color: #f5f5f5;
     font-family: "Roboto", sans-serif;
     color: #333;
 }
-
-/* Solid dark sidebar (no gradient) */
 [data-testid="stSidebar"] > div:first-child {
     background: #2a2a2a;
     color: white;
@@ -41,20 +40,14 @@ html, body {
 [data-testid="stSidebar"] .css-1d391kg p {
     color: white;
 }
-
-/* Remove borders on tabs */
 div.stTabs > div {
     border: none;
 }
-
-/* Main Title styling */
 h1 {
     text-align: center;
     font-size: 3rem;
     color: #2e7bcf;
 }
-
-/* Override Streamlit's button styling */
 .stButton>button {
     background-color: #2e7bcf;
     color: white;
@@ -63,8 +56,6 @@ h1 {
     padding: 0.5rem 1rem;
     border: none;
 }
-
-/* Download button customization */
 .css-1emrehy.edgvbvh3 { 
     background-color: #2e7bcf !important; 
     color: white !important;
@@ -84,10 +75,10 @@ except Exception:
 st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect), 
-simulates a runoff hydrograph, estimates retention time, nutrient leaching, and (optionally) burned-area risk.  
-For burned-area analyses, a KMZ file containing vector boundaries of burned areas is used.
-Additional terrain derivatives (flow accumulation, topographic wetness index, and curvature) are also computed 
-to help identify areas prone to water or snowmelt accumulation.
+simulates a runoff hydrograph, estimates retention time, nutrient leaching, and burned-area risk.  
+For burned-area analyses, you can upload either a KMZ file (with vector polygons), a georeferenced TIFF, or 
+a white–red JPG/PNG image where burned areas are marked (e.g., in red).  
+Additional terrain derivatives (flow accumulation, topographic wetness index, and curvature) are also computed.
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
@@ -100,11 +91,10 @@ right_bound = 28.045764
 bottom_bound = 36.133509
 
 # -----------------------------------------------------------------------------
-# 5. File upload: STL and burned-area KMZ
+# 5. File upload: STL and burned-area data
 # -----------------------------------------------------------------------------
 uploaded_stl = st.file_uploader("Upload STL file (for DEM)", type=["stl"])
-# Use the burned KMZ file (e.g., kmz.kmz) instead of a GeoTIFF
-uploaded_burned = st.file_uploader("Upload Burned-Area KMZ (e.g., kmz.kmz)", type=["kmz"])
+uploaded_burned = st.file_uploader("Upload Burned-Area Data (KMZ, TIFF, JPG, or PNG)", type=["kmz", "tif", "tiff", "jpg", "png"])
 
 # -----------------------------------------------------------------------------
 # 6. Global Sidebar Parameters (for DEM and Flow/Retention/Nutrients)
@@ -148,9 +138,9 @@ risk_rain_weight = st.sidebar.slider("Rain Weight", 0.0, 2.0, 1.0, 0.1)
 # -----------------------------------------------------------------------------
 risk_map = None       # Will hold risk map if burned area is provided
 burned_mask = None    # For later use in burned-area analysis
+burned_polygons = []  # To store vector geometries if available
 
 if uploaded_stl is not None:
-    # Save STL to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
         tmp_stl.write(uploaded_stl.read())
         stl_filename = tmp_stl.name
@@ -161,51 +151,41 @@ if uploaded_stl is not None:
         st.error(f"Error reading STL: {e}")
         st.stop()
 
-    # Extract vertices from STL
     vertices = stl_mesh.vectors.reshape(-1, 3)
     x_raw = vertices[:, 0]
     y_raw = vertices[:, 1]
     z_raw = vertices[:, 2]
 
-    # Apply global elevation adjustments
     z_adj = (z_raw * global_scale) + global_offset
 
-    # Map raw x,y to geographic coordinates using bounding box
     x_min, x_max = x_raw.min(), x_raw.max()
     y_min, y_max = y_raw.min(), y_raw.max()
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = top_bound - (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
 
-    # Create DEM grid
     xi = np.linspace(left_bound, right_bound, global_grid_res)
     yi = np.linspace(top_bound, bottom_bound, global_grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
-    # Interpolate to create DEM
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, global_dem_min, global_dem_max)
 
-    # Compute grid spacing in degrees
     dx = (right_bound - left_bound) / (global_grid_res - 1)
     dy = (top_bound - bottom_bound) / (global_grid_res - 1)
 
-    # Approximate conversion from degrees to meters
     avg_lat = (top_bound + bottom_bound) / 2.0
     meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
-    meters_per_deg_lat = 111320  # roughly constant
+    meters_per_deg_lat = 111320
 
     dx_meters = dx * meters_per_deg_lon
     dy_meters = dy * meters_per_deg_lat
 
-    # Compute slope and aspect
     dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-    # Affine transform for GeoTIFF export (still in EPSG:4326 coords)
     transform = from_origin(left_bound, top_bound, dx, dy)
 
-    # Flow Simulation
     area_m2 = catchment_area * 10000.0
     total_rain_m = (rainfall_intensity / 1000.0) * event_duration
     V_runoff = total_rain_m * area_m2 * runoff_coeff
@@ -219,63 +199,85 @@ if uploaded_stl is not None:
         else:
             Q[i] = Q_peak * np.exp(-recession_rate * (time - event_duration))
 
-    # Retention Time Calculation
     retention_time = storage_volume / (V_runoff / event_duration) if V_runoff > 0 else None
-
-    # Nutrient Leaching Calculation
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
-    # 8. Burned-Area Processing using KMZ
+    # 8. Burned-Area Processing using uploaded burned-area data
     # -----------------------------------------------------------------------------
-    burned_polygons = []
     if uploaded_burned is not None:
-        # Save KMZ file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as tmp_kmz:
-            tmp_kmz.write(uploaded_burned.read())
-            kmz_filename = tmp_kmz.name
-
-        # Open the KMZ as a zip and read the contained KML
-        try:
-            with zipfile.ZipFile(kmz_filename, 'r') as zf:
-                kml_filename = [name for name in zf.namelist() if name.endswith('.kml')][0]
-                kml_data = zf.read(kml_filename)
-        except Exception as e:
-            st.warning(f"Error reading KMZ file: {e}")
-            kml_data = None
-
-        if kml_data is not None:
+        ext = os.path.splitext(uploaded_burned.name)[1].lower()
+        if ext == ".kmz":
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as tmp_kmz:
+                tmp_kmz.write(uploaded_burned.read())
+                kmz_filename = tmp_kmz.name
             try:
-                k = kml.KML()
-                k.from_string(kml_data)
-                # Use the features attribute instead of calling features() as a function
-                for feature in k.features:
-                    for placemark in feature.features:
-                        if hasattr(placemark, 'geometry') and placemark.geometry is not None:
-                            geom = placemark.geometry
-                            if geom.geom_type == "Polygon":
-                                burned_polygons.append(geom)
-                            elif geom.geom_type == "MultiPolygon":
-                                burned_polygons.extend(list(geom.geoms))
-                if not burned_polygons:
-                    st.warning("No polygons found in the KMZ file.")
+                with zipfile.ZipFile(kmz_filename, 'r') as zf:
+                    kml_filename = [name for name in zf.namelist() if name.endswith('.kml')][0]
+                    kml_data = zf.read(kml_filename)
             except Exception as e:
-                st.warning(f"Error parsing KML: {e}")
-                burned_polygons = []
+                st.warning(f"Error reading KMZ file: {e}")
+                kml_data = None
+            if kml_data is not None:
+                try:
+                    k_obj = kml.KML()
+                    k_obj.from_string(kml_data)
+                    for feature in k_obj.features:
+                        for placemark in feature.features:
+                            if hasattr(placemark, 'geometry') and placemark.geometry is not None:
+                                geom = placemark.geometry
+                                if geom.geom_type == "Polygon":
+                                    burned_polygons.append(geom)
+                                elif geom.geom_type == "MultiPolygon":
+                                    burned_polygons.extend(list(geom.geoms))
+                    if not burned_polygons:
+                        st.warning("No polygons found in the KMZ file.")
+                except Exception as e:
+                    st.warning(f"Error parsing KML: {e}")
+                    burned_polygons = []
+            if burned_polygons:
+                shapes = [(poly, 1) for poly in burned_polygons]
+                burned_mask = rasterize(
+                    shapes,
+                    out_shape=grid_z.shape,
+                    transform=transform,
+                    fill=0,
+                    dtype=np.uint8
+                )
+            else:
+                burned_mask = None
+        elif ext in [".tif", ".tiff"]:
+            # Read raster data using rasterio
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_tif:
+                    tmp_tif.write(uploaded_burned.read())
+                    tif_filename = tmp_tif.name
+                with rasterio.open(tif_filename) as src:
+                    burned_img = src.read(1)
+                    # You might want to adjust the threshold based on your data; here we assume burned areas > 128
+                    burned_mask = (burned_img > 128).astype(np.uint8)
+            except Exception as e:
+                st.warning(f"Error reading burned TIFF: {e}")
+                burned_mask = None
+        elif ext in [".jpg", ".jpeg", ".png"]:
+            try:
+                # Read image using imageio, then convert using PIL to match the DEM grid size
+                burned_img = imageio.imread(uploaded_burned)
+                # If the image is RGB, assume burned areas are marked in red.
+                if burned_img.ndim == 3:
+                    # Adjust thresholds as needed. Here we mark as burned if red channel is high and green/blue are low.
+                    burned_mask = ((burned_img[..., 0] > 150) & 
+                                   (burned_img[..., 1] < 100) & 
+                                   (burned_img[..., 2] < 100)).astype(np.uint8)
+                else:
+                    burned_mask = (burned_img > 128).astype(np.uint8)
+                # Resize the image to match the DEM grid dimensions
+                burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
+            except Exception as e:
+                st.warning(f"Error reading burned JPG/PNG: {e}")
+                burned_mask = None
         else:
-            burned_polygons = []
-
-        # Rasterize the vector burned area polygons onto the DEM grid
-        if burned_polygons:
-            shapes = [(poly, 1) for poly in burned_polygons]
-            burned_mask = rasterize(
-                shapes,
-                out_shape=grid_z.shape,
-                transform=transform,
-                fill=0,
-                dtype=np.uint8
-            )
-        else:
+            st.warning("Unsupported burned-area file format.")
             burned_mask = None
 
     # -----------------------------------------------------------------------------
@@ -284,7 +286,7 @@ if uploaded_stl is not None:
     if burned_mask is not None:
         norm_slope = (slope - slope.min()) / (slope.max() - slope.min() + 1e-9)
         norm_dem   = (grid_z - grid_z.min()) / (grid_z.max() - grid_z.min() + 1e-9)
-        norm_rain = (rainfall_intensity * event_duration) / 100.0  # arbitrary scale
+        norm_rain = (rainfall_intensity * event_duration) / 100.0
         risk_map = (risk_slope_weight * norm_slope +
                     risk_dem_weight   * norm_dem +
                     risk_burned_weight * burned_mask +
@@ -450,7 +452,6 @@ if uploaded_stl is not None:
                 memfile_obj.seek(0)
                 memfile.write(memfile_obj.read())
             return memfile.getvalue()
-
         dem_tiff = export_geotiff(grid_z, transform)
         slope_tiff = export_geotiff(slope, transform)
         aspect_tiff = export_geotiff(aspect, transform)
@@ -475,23 +476,24 @@ if uploaded_stl is not None:
         st.write(f"Estimated Nutrient Load: {nutrient_load * nutrient_scale:.2f} kg")
 
     with tabs[7]:
-        st.subheader("Burned Area Analysis (from KMZ)")
+        st.subheader("Burned Area Analysis")
         if burned_mask is not None:
             percent_burned = 100.0 * np.sum(burned_mask) / burned_mask.size
             st.write(f"Percent Burned Area: {percent_burned:.2f}%")
             fig, ax = plt.subplots(figsize=(6,4))
             im = ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
                            origin='lower', cmap='gray', aspect='auto')
-            ax.set_title("Burned Area Mask (Rasterized from KMZ)")
+            ax.set_title("Burned Area Mask")
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
             fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
-            # Overlay polygon boundaries if available
-            for poly in burned_polygons:
-                x, y = poly.exterior.coords.xy
-                ax.plot(x, y, color='red', linewidth=2)
+            # If polygons were extracted, overlay boundaries
+            if burned_polygons:
+                for poly in burned_polygons:
+                    x, y = poly.exterior.coords.xy
+                    ax.plot(x, y, color='red', linewidth=2)
             st.pyplot(fig)
-            st.info("Red lines indicate the burned area boundaries extracted from the KMZ.")
+            st.info("Red lines indicate burned area boundaries (if available).")
         else:
             st.info("No burned-area data available (burned_mask is None).")
 
