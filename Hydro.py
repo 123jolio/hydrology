@@ -76,8 +76,8 @@ st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect), 
 simulates a runoff hydrograph, estimates retention time, nutrient leaching, and burned-area risk.  
-For burned-area analyses, you can upload either a KMZ file (with vector polygons), a georeferenced TIFF, or 
-a white–red JPG/PNG image where burned areas are marked (e.g., in red).  
+For burned-area analyses, you can upload a KMZ file (with vector polygons), a georeferenced TIFF, or 
+a white–red JPG/PNG image where burned areas are marked.  
 Additional terrain derivatives (flow accumulation, topographic wetness index, and curvature) are also computed.
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
@@ -137,7 +137,7 @@ risk_rain_weight = st.sidebar.slider("Rain Weight", 0.0, 2.0, 1.0, 0.1)
 # 7. Process STL and compute DEM and related maps
 # -----------------------------------------------------------------------------
 risk_map = None       # Will hold risk map if burned area is provided
-burned_mask = None    # For later use in burned-area analysis
+burned_mask = None    # For burned-area analysis
 burned_polygons = []  # To store vector geometries if available
 
 if uploaded_stl is not None:
@@ -247,31 +247,37 @@ if uploaded_stl is not None:
             else:
                 burned_mask = None
         elif ext in [".tif", ".tiff"]:
-            # Read raster data using rasterio
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_tif:
                     tmp_tif.write(uploaded_burned.read())
                     tif_filename = tmp_tif.name
                 with rasterio.open(tif_filename) as src:
                     burned_img = src.read(1)
-                    # You might want to adjust the threshold based on your data; here we assume burned areas > 128
-                    burned_mask = (burned_img > 128).astype(np.uint8)
+                    src_transform = src.transform
+                    burned_mask_temp = (burned_img > 128).astype(np.uint8)
+                    burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
+                    reproject(
+                        source=burned_mask_temp,
+                        destination=burned_mask_resampled,
+                        src_transform=src_transform,
+                        src_crs=src.crs,
+                        dst_transform=transform,
+                        dst_crs="EPSG:4326",
+                        resampling=Resampling.nearest
+                    )
+                    burned_mask = burned_mask_resampled
             except Exception as e:
                 st.warning(f"Error reading burned TIFF: {e}")
                 burned_mask = None
         elif ext in [".jpg", ".jpeg", ".png"]:
             try:
-                # Read image using imageio, then convert using PIL to match the DEM grid size
                 burned_img = imageio.imread(uploaded_burned)
-                # If the image is RGB, assume burned areas are marked in red.
                 if burned_img.ndim == 3:
-                    # Adjust thresholds as needed. Here we mark as burned if red channel is high and green/blue are low.
                     burned_mask = ((burned_img[..., 0] > 150) & 
                                    (burned_img[..., 1] < 100) & 
                                    (burned_img[..., 2] < 100)).astype(np.uint8)
                 else:
                     burned_mask = (burned_img > 128).astype(np.uint8)
-                # Resize the image to match the DEM grid dimensions
                 burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
             except Exception as e:
                 st.warning(f"Error reading burned JPG/PNG: {e}")
@@ -487,7 +493,6 @@ if uploaded_stl is not None:
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
             fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
-            # If polygons were extracted, overlay boundaries
             if burned_polygons:
                 for poly in burned_polygons:
                     x, y = poly.exterior.coords.xy
