@@ -53,7 +53,6 @@ def extract_kml_from_kmz(kmz_path):
     if not kml_files:
         st.error(f"No KML file found inside the KMZ: {kmz_path}")
         st.stop()
-    # Return the full path of the first KML file found
     return os.path.join(tmpdirname, kml_files[0])
 
 # Extract the KML file paths from each KMZ
@@ -78,7 +77,7 @@ st.write("Lake file geometry types:", gdf_lake.geometry.geom_type.unique())
 # Filter for contour lines in the contours dataset
 contours = gdf_contours[gdf_contours.geometry.type.isin(['LineString', 'MultiLineString'])]
 
-# Filter for lake polygons in the lake dataset
+# First, try filtering for polygons in the lake dataset
 lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
 
 # If no polygons are found, attempt to convert closed lines into polygons
@@ -116,8 +115,20 @@ if lakes.empty:
     gdf_lake['geometry'] = gdf_lake['geometry'].apply(convert_geometry)
     lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
 
+# If still no polygon, try buffering any line geometries
 if lakes.empty:
-    st.error("No lake polygon found in the lake KMZ even after conversion attempt.")
+    st.warning("No lake polygon found after conversion. Attempting to buffer line geometries.")
+    
+    def buffer_to_polygon(geom, buffer_distance=0.0001):
+        if geom.type in ['LineString', 'MultiLineString']:
+            return geom.buffer(buffer_distance)
+        return geom
+
+    gdf_lake['geometry'] = gdf_lake['geometry'].apply(buffer_to_polygon)
+    lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+    
+if lakes.empty:
+    st.error("No lake polygon found in the lake KMZ even after conversion and buffering attempts.")
     st.stop()
 
 # Extract contour points and elevations from the contours dataset
@@ -125,14 +136,12 @@ points = []
 values = []
 for idx, row in contours.iterrows():
     geom = row.geometry
-    # Handle both MultiLineString and LineString geometries
     if geom.type == 'MultiLineString':
         lines = list(geom)
     else:
         lines = [geom]
     for line in lines:
         for coord in line.coords:
-            # Prefer 3D coordinates; if not available, try to get elevation from an attribute
             if len(coord) >= 3:
                 x, y, z = coord[:3]
             else:
