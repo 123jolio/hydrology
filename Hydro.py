@@ -9,6 +9,7 @@ import rasterio
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
 import imageio  # for GIF creation
+import matplotlib.contour as contour  # for boundary extraction
 
 # -----------------------------------------------------------------------------
 # 1. MUST be the very first Streamlit command!
@@ -17,7 +18,6 @@ st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wi
 
 # -----------------------------------------------------------------------------
 # 2. Inject minimal, professional CSS (dark sidebar, no gradient)
-#    This CSS is injected and not displayed in the UI.
 # -----------------------------------------------------------------------------
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
@@ -125,9 +125,23 @@ veg_retention = st.sidebar.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05)
 erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
 # -----------------------------------------------------------------------------
+# NEW: Sidebar parameters for Slope Display and Burned Risk
+# -----------------------------------------------------------------------------
+st.sidebar.header("Slope Map Customization")
+slope_display_min = st.sidebar.number_input("Slope Display Minimum (°)", value=0.0, step=1.0)
+slope_display_max = st.sidebar.number_input("Slope Display Maximum (°)", value=70.0, step=1.0)
+
+st.sidebar.header("Burned Risk Parameters")
+risk_slope_weight = st.sidebar.slider("Slope Weight", 0.0, 2.0, 1.0, 0.1)
+risk_dem_weight = st.sidebar.slider("DEM Weight", 0.0, 2.0, 1.0, 0.1)
+risk_burned_weight = st.sidebar.slider("Burned Area Weight", 0.0, 2.0, 1.0, 0.1)
+risk_rain_weight = st.sidebar.slider("Rain Weight", 0.0, 2.0, 1.0, 0.1)
+
+# -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
 # -----------------------------------------------------------------------------
 risk_map = None  # Will hold risk map if burned area is provided
+burned_mask = None  # For later use in burned-area analysis
 
 if uploaded_stl is not None:
     # Save STL to temporary file
@@ -196,7 +210,7 @@ if uploaded_stl is not None:
     # Nutrient Leaching Calculation
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
-    # Burned-Area Risk (if burned GeoTIFF is provided)
+    # Burned-Area Processing (if burned GeoTIFF is provided)
     if uploaded_burned is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_burn:
             tmp_burn.write(uploaded_burned.read())
@@ -211,11 +225,13 @@ if uploaded_stl is not None:
             burned_img = None
 
         if burned_img is not None and burned_img.shape[0] >= 3:
+            # Create burned mask based on RGB thresholds
             burned_mask = np.logical_and.reduce((
                 burned_img[0] >= 100, burned_img[0] <= 180,
                 burned_img[1] >= 200, burned_img[1] <= 255,
                 burned_img[2] >= 100, burned_img[2] <= 180
             )).astype(np.uint8)
+            # Resample burned mask to DEM grid resolution
             burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
             reproject(
                 source=burned_mask,
@@ -226,13 +242,19 @@ if uploaded_stl is not None:
                 dst_crs="EPSG:4326",
                 resampling=Resampling.nearest
             )
-            eps = 0.01
-            risk_map = burned_mask_resampled * (1.0 / (slope + eps))
-            rmin, rmax = risk_map.min(), risk_map.max()
-            if rmax > rmin:
-                risk_map = (risk_map - rmin) / (rmax - rmin)
-            else:
-                risk_map[:] = 0
+            # --- New Risk Map Calculation ---
+            # Normalize slope and DEM
+            norm_slope = (slope - np.min(slope)) / (np.max(slope) - np.min(slope) + 1e-9)
+            norm_dem = (grid_z - np.min(grid_z)) / (np.max(grid_z) - np.min(grid_z) + 1e-9)
+            # Use the burned mask as is (0 or 1) and define a normalized rain factor (constant over the domain)
+            norm_rain = (rainfall_intensity * event_duration) / 100.0  # adjust denominator as needed
+            # Compute a weighted risk map
+            risk_map = (risk_slope_weight * norm_slope +
+                        risk_dem_weight * norm_dem +
+                        risk_burned_weight * burned_mask_resampled +
+                        risk_rain_weight * norm_rain) 
+            # Normalize risk map to 0-1
+            risk_map = (risk_map - np.min(risk_map)) / (np.max(risk_map) - np.min(risk_map) + 1e-9)
 
     # -----------------------------------------------------------------------------
     # Helper: Placeholder GIF creation function
@@ -271,10 +293,10 @@ if uploaded_stl is not None:
     # -----------------------------------------------------------------------------
     # 10. Display results in dedicated tabs with scenario-specific parameter expanders
     # -----------------------------------------------------------------------------
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "DEM Heatmap", "Slope Map", "Aspect Map",
         "Flow Simulation", "Retention Time", "GeoTIFF Export",
-        "Nutrient Leaching", "Burned Risk", "Scenario GIFs"
+        "Nutrient Leaching", "Burned Area Analysis", "Burned Risk", "Scenario GIFs"
     ])
 
     # ---- DEM Heatmap Tab ----
@@ -299,7 +321,8 @@ if uploaded_stl is not None:
         st.subheader("Slope Map")
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=slope_cmap, aspect='auto')
+                       origin='lower', cmap=slope_cmap,
+                       vmin=slope_display_min, vmax=slope_display_max, aspect='auto')
         ax.set_title("Slope (Degrees)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -319,6 +342,76 @@ if uploaded_stl is not None:
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Aspect (°)")
         st.pyplot(fig)
+
+    # ---- Burned Area Analysis Tab (New) ----
+    with tab8:
+        st.subheader("Burned Area GeoTIFF & Analysis")
+        if burned_mask is not None:
+            # Calculate percent burned
+            percent_burned = 100.0 * np.sum(burned_mask) / burned_mask.size
+            st.write(f"Percent Burned Area: {percent_burned:.2f}%")
+            # Display the burned mask (use a colormap that highlights burned regions)
+            fig, ax = plt.subplots(figsize=(6,4))
+            im = ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                           origin='lower', cmap='gray', aspect='auto')
+            ax.set_title("Burned Area Mask")
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+            fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
+            # Compute boundaries via contouring
+            cs = ax.contour(burned_mask, levels=[0.5], colors='red', extent=(left_bound, right_bound, bottom_bound, top_bound))
+            st.pyplot(fig)
+            st.info("Red contour shows the boundary of the burned area.")
+        else:
+            st.info("No burned-area data available for analysis.")
+
+    # ---- Burned Risk Tab ----
+    with tab9:
+        st.subheader("Enhanced Burned Risk Map")
+        if risk_map is not None:
+            fig, ax = plt.subplots(figsize=(6,4))
+            im = ax.imshow(risk_map, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                           origin='lower', cmap='inferno', aspect='auto')
+            ax.set_title("Burned Risk Map (Weighted Factors)")
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+            fig.colorbar(im, ax=ax, label="Risk Score (0-1)")
+            st.pyplot(fig)
+        else:
+            st.info("Burned risk map unavailable (no burned-area data).")
+
+    # ---- GeoTIFF Export Tab ----
+    with tab6:
+        st.subheader("Export GeoTIFFs")
+        def export_geotiff(array, transform, crs="EPSG:4326"):
+            memfile = io.BytesIO()
+            with rasterio.io.MemoryFile() as memfile_obj:
+                with memfile_obj.open(
+                    driver="GTiff",
+                    height=array.shape[0],
+                    width=array.shape[1],
+                    count=1,
+                    dtype="float32",
+                    crs=crs,
+                    transform=transform,
+                ) as dataset:
+                    dataset.write(array.astype("float32"), 1)
+                memfile_obj.seek(0)
+                memfile.write(memfile_obj.read())
+            return memfile.getvalue()
+
+        dem_tiff = export_geotiff(grid_z, transform)
+        slope_tiff = export_geotiff(slope, transform)
+        aspect_tiff = export_geotiff(aspect, transform)
+        st.download_button("Download DEM (GeoTIFF)", dem_tiff, "DEM.tif", "image/tiff")
+        st.download_button("Download Slope (GeoTIFF)", slope_tiff, "Slope.tif", "image/tiff")
+        st.download_button("Download Aspect (GeoTIFF)", aspect_tiff, "Aspect.tif", "image/tiff")
+        if burned_mask is not None:
+            burned_tiff = export_geotiff(burned_mask.astype("float32"), transform)
+            st.download_button("Download Burned Area Mask (GeoTIFF)", burned_tiff, "BurnedArea.tif", "image/tiff")
+        if risk_map is not None:
+            risk_tiff = export_geotiff(risk_map, transform)
+            st.download_button("Download Risk (GeoTIFF)", risk_tiff, "RiskMap.tif", "image/tiff")
 
     # ---- Flow Simulation Tab ----
     with tab4:
@@ -347,36 +440,6 @@ if uploaded_stl is not None:
         else:
             st.warning("No effective runoff -> Retention time not applicable.")
 
-    # ---- GeoTIFF Export Tab ----
-    with tab6:
-        st.subheader("Export GeoTIFFs")
-        def export_geotiff(array, transform, crs="EPSG:4326"):
-            memfile = io.BytesIO()
-            with rasterio.io.MemoryFile() as memfile_obj:
-                with memfile_obj.open(
-                    driver="GTiff",
-                    height=array.shape[0],
-                    width=array.shape[1],
-                    count=1,
-                    dtype="float32",
-                    crs=crs,
-                    transform=transform,
-                ) as dataset:
-                    dataset.write(array.astype("float32"), 1)
-                memfile_obj.seek(0)
-                memfile.write(memfile_obj.read())
-            return memfile.getvalue()
-
-        dem_tiff = export_geotiff(grid_z, transform)
-        slope_tiff = export_geotiff(slope, transform)
-        aspect_tiff = export_geotiff(aspect, transform)
-        st.download_button("Download DEM (GeoTIFF)", dem_tiff, "DEM.tif", "image/tiff")
-        st.download_button("Download Slope (GeoTIFF)", slope_tiff, "Slope.tif", "image/tiff")
-        st.download_button("Download Aspect (GeoTIFF)", aspect_tiff, "Aspect.tif", "image/tiff")
-        if risk_map is not None:
-            risk_tiff = export_geotiff(risk_map, transform)
-            st.download_button("Download Risk (GeoTIFF)", risk_tiff, "RiskMap.tif", "image/tiff")
-
     # ---- Nutrient Leaching Tab ----
     with tab7:
         with st.expander("Nutrient Leaching Parameters", expanded=False):
@@ -388,27 +451,8 @@ if uploaded_stl is not None:
         st.write(f"Catchment Area: {catchment_area} ha")
         st.write(f"Estimated Nutrient Load: {nutrient_load * nutrient_scale:.2f} kg")
 
-    # ---- Burned-Area Risk Tab ----
-    with tab8:
-        with st.expander("Burned-Area Risk Parameters", expanded=False):
-            risk_epsilon = st.number_input("Risk Epsilon", value=0.01, step=0.001, key="risk_epsilon")
-            risk_scale = st.number_input("Risk Scale Factor", value=1.0, step=0.1, key="risk_scale")
-        st.subheader("Burned-Area Risk")
-        if risk_map is not None:
-            risk_adjusted = risk_map * risk_scale  # simple adjustment
-            fig, ax = plt.subplots(figsize=(6,4))
-            im = ax.imshow(risk_adjusted, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                           origin='lower', cmap='inferno', aspect='auto')
-            ax.set_title("Risk Map (Burned & Accumulation)")
-            ax.set_xlabel("Longitude")
-            ax.set_ylabel("Latitude")
-            fig.colorbar(im, ax=ax, label="Risk Score (0-1)")
-            st.pyplot(fig)
-        else:
-            st.info("No burned-area data -> Risk map unavailable.")
-
     # ---- Scenario GIFs Tab ----
-    with tab9:
+    with tab10:
         with st.expander("Scenario GIF Parameters", expanded=False):
             gif_frames = st.number_input("GIF Frames", value=10, step=1, key="gif_frames")
             gif_fps = st.number_input("GIF FPS", value=2, step=1, key="gif_fps")
