@@ -7,6 +7,7 @@ import tempfile
 import io
 import rasterio
 from rasterio.transform import from_origin
+from rasterio.warp import reproject, Resampling
 
 # MUST be the very first Streamlit command!
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
@@ -67,6 +68,7 @@ except Exception:
 st.title("Advanced Hydrogeology & DEM Analysis")
 st.markdown("""
 This application generates a high-quality Digital Elevation Model (DEM) from an STL file, computes advanced hydrogeological maps (slope and aspect), simulates a runoff hydrograph, calculates a retention time estimate, and estimates potential nutrient leaching.  
+Additionally, you can upload a burned–area GeoTIFF (with burned areas marked as light green) to produce a risk map that estimates the potential for accumulation of burned vegetation and soil (which may indicate increased erosion risk).  
 All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
@@ -80,9 +82,10 @@ right_bound = 28.045764       # Longitude (Bottom right)
 bottom_bound = 36.133509      # Latitude (Bottom right)
 
 # -----------------------------------------------------------------------------
-# File upload (STL file)
+# File upload: STL file and (optionally) burned area GeoTIFF
 # -----------------------------------------------------------------------------
-uploaded_file = st.file_uploader("Upload your STL file", type=["stl"])
+uploaded_stl = st.file_uploader("Upload your STL file", type=["stl"])
+uploaded_burned = st.file_uploader("Upload burned area GeoTIFF (burned areas marked as light green)", type=["tif", "tiff"])
 
 # -----------------------------------------------------------------------------
 # Sidebar: DEM and Elevation Adjustment Parameters
@@ -127,10 +130,10 @@ erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05,
 # -----------------------------------------------------------------------------
 # Process STL file and generate DEM & Hydro Maps
 # -----------------------------------------------------------------------------
-if uploaded_file is not None:
-    # Save the uploaded STL file to a temporary file
+if uploaded_stl is not None:
+    # Save the STL file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_file:
-        tmp_file.write(uploaded_file.read())
+        tmp_file.write(uploaded_stl.read())
         stl_filename = tmp_file.name
 
     try:
@@ -148,10 +151,12 @@ if uploaded_file is not None:
     # Apply raw elevation adjustments (scale and offset)
     z_adj = (z_raw * scale_factor) + elevation_offset
 
-    # --- Transform raw x,y coordinates to lon/lat ---
+    # --- Transform raw x,y coordinates to geographic coordinates ---
     x_min, x_max = x_raw.min(), x_raw.max()
     y_min, y_max = y_raw.min(), y_raw.max()
+    # Map raw x values to the provided longitude range
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
+    # Map raw y values to the provided latitude range (note the inversion so that higher raw y = higher lat)
     lat_raw = top_bound - (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
 
     # Create a georeferenced grid using the provided bounding box
@@ -159,7 +164,7 @@ if uploaded_file is not None:
     yi = np.linspace(top_bound, bottom_bound, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
-    # Interpolate the adjusted elevation values onto the grid using cubic interpolation.
+    # Interpolate the adjusted elevation values onto the grid using cubic interpolation
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
@@ -203,6 +208,48 @@ if uploaded_file is not None:
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
+    # Risk Estimation: Erosion/Accumulation Risk Model Based on Burned Areas and DEM
+    # -----------------------------------------------------------------------------
+    risk_map = None
+    if uploaded_burned is not None:
+        # Read the burned area GeoTIFF (assumed to be in RGB)
+        with rasterio.open(uploaded_burned) as src:
+            burned_img = src.read()  # shape: (bands, height, width)
+            src_transform = src.transform
+            src_crs = src.crs
+
+        # Assume burned areas are marked as light green.
+        # Here we define thresholds (in 8-bit values) for light green:
+        # For example, R between 100 and 180, G between 200 and 255, B between 100 and 180.
+        # Adjust these thresholds as needed.
+        burned_mask = np.logical_and.reduce((
+            burned_img[0] >= 100, burned_img[0] <= 180,
+            burned_img[1] >= 200, burned_img[1] <= 255,
+            burned_img[2] >= 100, burned_img[2] <= 180
+        ))
+        # Convert boolean mask to uint8 (1 for burned, 0 for not burned)
+        burned_mask = burned_mask.astype(np.uint8)
+
+        # Resample the burned mask to our DEM grid using nearest-neighbor resampling
+        burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
+        reproject(
+            source=burned_mask,
+            destination=burned_mask_resampled,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=transform,
+            dst_crs="EPSG:4326",
+            resampling=Resampling.nearest
+        )
+        # For our risk model, we assume that in burned areas, risk increases when slope is low
+        # (i.e. water and eroded materials accumulate). We compute a simple risk score:
+        # risk_score = burned_mask * (1 / (slope + epsilon))
+        epsilon = 0.01  # avoid division by zero
+        risk_map = burned_mask_resampled * (1.0 / (slope + epsilon))
+        # Normalize risk_map for visualization (e.g., 0 to 1 scale)
+        risk_map = (risk_map - risk_map.min()) / (risk_map.max() - risk_map.min() + 1e-9)
+
+    # -----------------------------------------------------------------------------
     # Function to export arrays as GeoTIFF using rasterio
     # -----------------------------------------------------------------------------
     def export_geotiff(array, transform, crs="EPSG:4326"):
@@ -225,9 +272,9 @@ if uploaded_file is not None:
     # -----------------------------------------------------------------------------
     # Display results in multiple tabs
     # -----------------------------------------------------------------------------
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "DEM Heatmap", "Slope Map", "Aspect Map",
-        "Flow Simulation", "Retention Time", "Export GeoTIFFs", "Nutrient Leaching"
+        "Flow Simulation", "Retention Time", "Export GeoTIFFs", "Nutrient Leaching", "Risk Map"
     ])
 
     with tab1:
@@ -289,6 +336,9 @@ if uploaded_file is not None:
         st.download_button("Download DEM GeoTIFF", dem_tiff, file_name="DEM.tif", mime="image/tiff")
         st.download_button("Download Slope GeoTIFF", slope_tiff, file_name="Slope.tif", mime="image/tiff")
         st.download_button("Download Aspect GeoTIFF", aspect_tiff, file_name="Aspect.tif", mime="image/tiff")
+        if risk_map is not None:
+            risk_tiff = export_geotiff(risk_map, transform)
+            st.download_button("Download Risk Map GeoTIFF", risk_tiff, file_name="RiskMap.tif", mime="image/tiff")
 
     with tab7:
         st.subheader("Nutrient Leaching Simulation")
@@ -306,5 +356,19 @@ if uploaded_file is not None:
             st.warning("High nutrient export may increase the risk of eutrophication in downstream water bodies.")
         else:
             st.success("Estimated nutrient export is moderate. Further analysis is recommended.")
+
+    with tab8:
+        st.subheader("Risk Map (Burned Areas & Accumulation Risk)")
+        if risk_map is not None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            im = ax.imshow(risk_map, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                           origin='lower', cmap='inferno', aspect='auto')
+            ax.set_title("Risk Map: Higher values indicate increased risk of burned area accumulation and erosion")
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+            fig.colorbar(im, ax=ax, label="Normalized Risk Score (0-1)")
+            st.pyplot(fig)
+        else:
+            st.info("Burned area GeoTIFF not provided; risk estimation unavailable.")
 else:
     st.info("Please upload an STL file to generate the hydrogeological maps and analyses.")
