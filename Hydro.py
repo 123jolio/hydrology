@@ -85,7 +85,7 @@ st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect), 
 simulates a runoff hydrograph, estimates retention time, nutrient leaching, and (optionally) burned-area risk.  
-For burned-area analyses, the KMZ file (e.g., "kmz.kmz") containing vector boundaries of burned areas is used.  
+For burned-area analyses, a KMZ file containing vector boundaries of burned areas is used.
 Additional terrain derivatives (flow accumulation, topographic wetness index, and curvature) are also computed 
 to help identify areas prone to water or snowmelt accumulation.
 All outputs can be exported as georeferenced GeoTIFF files.
@@ -103,7 +103,7 @@ bottom_bound = 36.133509
 # 5. File upload: STL and burned-area KMZ
 # -----------------------------------------------------------------------------
 uploaded_stl = st.file_uploader("Upload STL file (for DEM)", type=["stl"])
-# Use the burned KMZ (e.g., kmz.kmz) instead of a GeoTIFF
+# Use the burned KMZ file (e.g., kmz.kmz) instead of a GeoTIFF
 uploaded_burned = st.file_uploader("Upload Burned-Area KMZ (e.g., kmz.kmz)", type=["kmz"])
 
 # -----------------------------------------------------------------------------
@@ -228,6 +228,7 @@ if uploaded_stl is not None:
     # -----------------------------------------------------------------------------
     # 8. Burned-Area Processing using KMZ
     # -----------------------------------------------------------------------------
+    burned_polygons = []
     if uploaded_burned is not None:
         # Save KMZ file to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as tmp_kmz:
@@ -244,14 +245,12 @@ if uploaded_stl is not None:
             kml_data = None
 
         if kml_data is not None:
-            # Parse the KML using fastkml
             try:
                 k = kml.KML()
                 k.from_string(kml_data)
-                burned_polygons = []
-                # Traverse the features (assuming structure: KML -> Document -> Folder -> Placemark)
-                for feature in k.features():
-                    for placemark in feature.features():
+                # Use the features attribute instead of calling features() as a function
+                for feature in k.features:
+                    for placemark in feature.features:
                         if hasattr(placemark, 'geometry') and placemark.geometry is not None:
                             geom = placemark.geometry
                             if geom.geom_type == "Polygon":
@@ -487,7 +486,7 @@ if uploaded_stl is not None:
             ax.set_xlabel("Longitude")
             ax.set_ylabel("Latitude")
             fig.colorbar(im, ax=ax, label="Burned (1) / Not Burned (0)")
-            # Optionally, overlay the polygon boundaries
+            # Overlay polygon boundaries if available
             for poly in burned_polygons:
                 x, y = poly.exterior.coords.xy
                 ax.plot(x, y, color='red', linewidth=2)
