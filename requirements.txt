@@ -18,8 +18,4 @@ requests
 openpyxl
 streamlit-drawable-canvas
 # Do NOT include richdem
-streamlit
-numpy
-matplotlib
-scipy
 numpy-stl
