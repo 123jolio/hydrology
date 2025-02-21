@@ -8,13 +8,14 @@ import io
 import rasterio
 from rasterio.transform import from_origin
 
-# -----------------------------------------------------------------------------
-# Custom CSS for a professional look
-# -----------------------------------------------------------------------------
+# MUST be the very first Streamlit command!
+st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
+
+# Custom CSS for an ultra-cool, professional UI
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
 <style>
-/* Set a modern, clean background color and font for the entire app */
+/* Global styling */
 body {
     background-color: #f0f2f6;
     color: #333;
@@ -69,9 +70,8 @@ div.stTabs > div {
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Page configuration and header with logo
+# Header with logo and title
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
 try:
     st.image("logo.png", width=200)
 except Exception:
@@ -197,7 +197,7 @@ if uploaded_file is not None:
     V_runoff = total_rain_m * area_m2 * runoff_coefficient  # Effective runoff volume (m³)
     Q_peak = V_runoff / event_duration  # Approximate peak flow (m³/hr)
 
-    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))
+    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))  # time in hours (minute resolution)
     Q = np.zeros_like(t)
     for i, time in enumerate(t):
         if time <= event_duration:
