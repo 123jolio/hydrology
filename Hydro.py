@@ -4,130 +4,268 @@ import matplotlib.pyplot as plt
 from stl import mesh
 from scipy.interpolate import griddata
 import tempfile
+import io
+import rasterio
+from rasterio.transform import from_origin
 
-# Configure the Streamlit page
-st.set_page_config(page_title="STL Heatmap & Hydrogeology", layout="wide")
-st.title("STL Heatmap & Hydrogeology Visualization")
+# -----------------------------------------------------------------------------
+# Page configuration and header with logo
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
+try:
+    st.image("logo.png", width=200)
+except Exception:
+    st.write("Logo file not found.")
+
+st.title("Advanced Hydrogeology & DEM Analysis")
 st.markdown("""
-Upload an STL file to generate a DEM heatmap based on its elevation (z‑values).  
-You can adjust the raw elevation values and then constrain the final DEM to a specific range.  
-Additionally, this app computes a slope map and an aspect map derived from the DEM for basic hydrogeological analysis.
+This application generates a high-quality Digital Elevation Model (DEM) from an STL file, computes advanced hydrogeological maps (slope and aspect), simulates a runoff hydrograph, calculates a retention time estimate, and estimates potential nutrient leaching.  
+All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
-# File uploader widget for STL file
+# -----------------------------------------------------------------------------
+# Georeference (bounding box) for the DEM products (EPSG:4326)
+# (Coordinates extracted from the image)
+# -----------------------------------------------------------------------------
+left_bound = 27.906069      # Longitude (Top left)
+top_bound = 36.92337189       # Latitude (Top left)
+right_bound = 28.045764       # Longitude (Bottom right)
+bottom_bound = 36.133509      # Latitude (Bottom right)
+
+# -----------------------------------------------------------------------------
+# File upload (STL file)
+# -----------------------------------------------------------------------------
 uploaded_file = st.file_uploader("Upload your STL file", type=["stl"])
 
-# Sidebar controls for raw elevation adjustments
-st.sidebar.header("Raw Elevation Adjustment")
-scale_factor = st.sidebar.slider("Elevation Scale Factor", min_value=0.1, max_value=5.0, value=1.0, step=0.1,
-                                 help="Multiply raw elevation values by this factor")
-elevation_offset = st.sidebar.slider("Elevation Offset", min_value=-100.0, max_value=100.0, value=0.0, step=1.0,
-                                     help="Add this value to all raw elevation values")
+# -----------------------------------------------------------------------------
+# Sidebar: DEM and Elevation Adjustment Parameters
+# -----------------------------------------------------------------------------
+st.sidebar.header("DEM & Elevation Adjustment")
+scale_factor = st.sidebar.slider("Raw Elevation Scale Factor", 0.1, 5.0, 1.0, 0.1,
+                                 help="Multiply the raw elevation values by this factor")
+elevation_offset = st.sidebar.slider("Raw Elevation Offset (m)", -100.0, 100.0, 0.0, 1.0,
+                                     help="Add this offset to all raw elevation values")
+st.sidebar.header("DEM Clipping")
+dem_min = st.sidebar.number_input("DEM Minimum Elevation (m)", value=0.0, step=1.0)
+dem_max = st.sidebar.number_input("DEM Maximum Elevation (m)", value=500.0, step=1.0)
+grid_res = st.sidebar.number_input("Grid Resolution", 100, 1000, 500, 50)
 
-# Sidebar controls for post‑interpolation DEM adjustment
-st.sidebar.header("DEM Elevation Range")
-dem_min = st.sidebar.number_input("DEM Minimum Elevation", value=0.0, step=1.0, help="Minimum elevation for DEM")
-dem_max = st.sidebar.number_input("DEM Maximum Elevation", value=400.0, step=1.0, help="Maximum elevation for DEM")
+# -----------------------------------------------------------------------------
+# Sidebar: Flow Simulation Parameters
+# -----------------------------------------------------------------------------
+st.sidebar.header("Flow Simulation Parameters")
+rainfall_intensity = st.sidebar.number_input("Rainfall Intensity (mm/hr)", value=30.0, step=1.0)
+event_duration = st.sidebar.number_input("Rainfall Event Duration (hr)", value=2.0, step=0.1)
+catchment_area = st.sidebar.number_input("Catchment Area (ha)", value=10.0, step=0.1)
+runoff_coefficient = st.sidebar.slider("Runoff Coefficient", 0.0, 1.0, 0.5, 0.05)
+recession_rate = st.sidebar.number_input("Recession Rate (1/hr)", value=0.5, step=0.1)
+simulation_duration = st.sidebar.number_input("Hydrograph Simulation Duration (hr)", value=6.0, step=0.5)
 
-# Sidebar widget for grid resolution
-grid_res = st.sidebar.number_input("Grid resolution", min_value=100, max_value=1000, value=500, step=50)
+# -----------------------------------------------------------------------------
+# Sidebar: Retention Time Parameter
+# -----------------------------------------------------------------------------
+st.sidebar.header("Retention Time Parameters")
+storage_volume = st.sidebar.number_input("Storage Volume (m³)", value=5000.0, step=100.0)
 
+# -----------------------------------------------------------------------------
+# Sidebar: Nutrient Leaching Parameters
+# -----------------------------------------------------------------------------
+st.sidebar.header("Nutrient Leaching Parameters")
+soil_nutrient = st.sidebar.number_input("Soil Nutrient Content (kg/ha)", value=50.0, step=1.0)
+veg_retention = st.sidebar.slider("Vegetation Retention Factor", 0.0, 1.0, 0.7, 0.05,
+                                  help="Fraction of soil nutrients retained by vegetation (1 = full retention)")
+erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05,
+                                   help="Fraction of soil nutrients mobilized due to erosion")
+
+# -----------------------------------------------------------------------------
+# Process STL file and generate DEM & Hydro Maps
+# -----------------------------------------------------------------------------
 if uploaded_file is not None:
-    # Write the uploaded file to a temporary file
+    # Save the uploaded STL file to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_file:
         tmp_file.write(uploaded_file.read())
         stl_filename = tmp_file.name
 
     try:
-        # Load the STL mesh using numpy-stl
-        mesh_data = mesh.Mesh.from_file(stl_filename)
+        stl_mesh = mesh.Mesh.from_file(stl_filename)
     except Exception as e:
         st.error(f"Error reading STL file: {e}")
         st.stop()
 
-    # Extract vertices from the mesh (each triangle has 3 vertices)
-    vertices = mesh_data.vectors.reshape(-1, 3)
-    x = vertices[:, 0]
-    y = vertices[:, 1]
-    z = vertices[:, 2]
+    # Extract vertices from the STL mesh (each triangle has 3 vertices)
+    vertices = stl_mesh.vectors.reshape(-1, 3)
+    x_raw = vertices[:, 0]
+    y_raw = vertices[:, 1]
+    z_raw = vertices[:, 2]
 
-    # Apply raw elevation adjustments
-    z_adjusted = (z * scale_factor) + elevation_offset
+    # Apply raw elevation adjustments (scale and offset)
+    z_adj = (z_raw * scale_factor) + elevation_offset
 
-    # Create a grid for interpolation
-    xi = np.linspace(x.min(), x.max(), grid_res)
-    yi = np.linspace(y.min(), y.max(), grid_res)
+    # --- Transform raw x,y coordinates to lon/lat ---
+    # Compute the raw extents
+    x_min, x_max = x_raw.min(), x_raw.max()
+    y_min, y_max = y_raw.min(), y_raw.max()
+    # Linearly map x_raw to the provided longitude range and y_raw to the latitude range.
+    # Note: We subtract from top_bound so that higher raw y corresponds to higher latitude.
+    lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
+    lat_raw = top_bound - (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
+
+    # Create a georeferenced grid using the provided bounding box
+    xi = np.linspace(left_bound, right_bound, grid_res)
+    yi = np.linspace(top_bound, bottom_bound, grid_res)  # From high (top) to low (bottom)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
-    # Interpolate the scattered adjusted z-values onto the grid using cubic interpolation
-    grid_z = griddata((x, y), z_adjusted, (grid_x, grid_y), method='cubic')
-
-    # Apply post-interpolation clipping to constrain the DEM within the specified range
+    # Interpolate the adjusted elevation values onto the grid using cubic interpolation.
+    # Note: Use the transformed lon/lat coordinates.
+    grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
-    # Calculate grid spacing (assumes uniform spacing)
-    dx = (xi[-1] - xi[0]) / (grid_res - 1)
-    dy = (yi[-1] - yi[0]) / (grid_res - 1)
+    # Determine grid spacing (approximation in degrees for small extents)
+    pixel_width = (right_bound - left_bound) / (grid_res - 1)
+    pixel_height = (top_bound - bottom_bound) / (grid_res - 1)
 
-    # Compute gradients in x and y directions
-    dz_dx, dz_dy = np.gradient(grid_z, dx, dy)
-
-    # Compute slope in degrees
+    # Compute gradients to derive slope and aspect
+    dz_dx, dz_dy = np.gradient(grid_z, pixel_width, pixel_height)
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
-
-    # Compute aspect in degrees
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx))
-    aspect = (aspect + 360) % 360  # convert to 0-360 range
+    aspect = (aspect + 360) % 360
 
-    # Create tabs for visualizing results
-    tab1, tab2, tab3 = st.tabs(["DEM Heatmap", "Slope Map", "Aspect Map"])
+    # Define affine transform for GeoTIFF export (upper-left corner, pixel size)
+    transform = from_origin(left_bound, top_bound, pixel_width, pixel_height)
+
+    # -----------------------------------------------------------------------------
+    # Flow Simulation (Advanced Hydrograph)
+    # -----------------------------------------------------------------------------
+    area_m2 = catchment_area * 10000.0  # Convert ha to m²
+    total_rain_m = (rainfall_intensity / 1000.0) * event_duration  # Total rainfall depth (m)
+    V_runoff = total_rain_m * area_m2 * runoff_coefficient  # Effective runoff volume (m³)
+    Q_peak = V_runoff / event_duration  # Approximate peak flow (m³/hr)
+
+    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))  # time in hours (minute resolution)
+    Q = np.zeros_like(t)
+    for i, time in enumerate(t):
+        if time <= event_duration:
+            Q[i] = Q_peak * (time / event_duration)
+        else:
+            Q[i] = Q_peak * np.exp(-recession_rate * (time - event_duration))
+
+    # -----------------------------------------------------------------------------
+    # Retention Time Calculation (Using effective runoff)
+    # -----------------------------------------------------------------------------
+    if V_runoff > 0:
+        retention_time = storage_volume / (V_runoff / event_duration)
+    else:
+        retention_time = None
+
+    # -----------------------------------------------------------------------------
+    # Nutrient Leaching Simulation
+    # -----------------------------------------------------------------------------
+    nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
+
+    # -----------------------------------------------------------------------------
+    # Function to export arrays as GeoTIFF using rasterio
+    # -----------------------------------------------------------------------------
+    def export_geotiff(array, transform, crs="EPSG:4326"):
+        memfile = io.BytesIO()
+        with rasterio.io.MemoryFile() as memfile_obj:
+            with memfile_obj.open(
+                driver="GTiff",
+                height=array.shape[0],
+                width=array.shape[1],
+                count=1,
+                dtype="float32",
+                crs=crs,
+                transform=transform,
+            ) as dataset:
+                dataset.write(array.astype("float32"), 1)
+            memfile_obj.seek(0)
+            memfile.write(memfile_obj.read())
+        return memfile.getvalue()
+
+    # -----------------------------------------------------------------------------
+    # Display results in multiple tabs
+    # -----------------------------------------------------------------------------
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "DEM Heatmap", "Slope Map", "Aspect Map",
+        "Flow Simulation", "Retention Time", "Export GeoTIFFs", "Nutrient Leaching"
+    ])
 
     with tab1:
-        st.subheader("DEM Heatmap (Adjusted Elevation)")
-        fig1, ax1 = plt.subplots(figsize=(8, 6))
-        im1 = ax1.imshow(
-            grid_z, 
-            extent=(x.min(), x.max(), y.min(), y.max()),
-            origin='lower', 
-            cmap='hot', 
-            aspect='auto'
-        )
-        ax1.set_title("DEM Heatmap (Adjusted Elevation)")
-        ax1.set_xlabel("X")
-        ax1.set_ylabel("Y")
-        fig1.colorbar(im1, ax=ax1, label="Elevation (Z)")
-        st.pyplot(fig1)
+        st.subheader("DEM Heatmap")
+        # Force the colormap to span 0 to 500 m for the plot and legend.
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                       origin='upper', cmap='hot', aspect='auto', vmin=0, vmax=500)
+        ax.set_title("DEM Heatmap (Adjusted Elevation)")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        fig.colorbar(im, ax=ax, label="Elevation (m) [0 - 500 m]")
+        st.pyplot(fig)
 
     with tab2:
         st.subheader("Slope Map")
-        fig2, ax2 = plt.subplots(figsize=(8, 6))
-        im2 = ax2.imshow(
-            slope, 
-            extent=(x.min(), x.max(), y.min(), y.max()),
-            origin='lower', 
-            cmap='viridis', 
-            aspect='auto'
-        )
-        ax2.set_title("Slope Map (Degrees)")
-        ax2.set_xlabel("X")
-        ax2.set_ylabel("Y")
-        fig2.colorbar(im2, ax=ax2, label="Slope (°)")
-        st.pyplot(fig2)
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                       origin='upper', cmap='viridis', aspect='auto')
+        ax.set_title("Slope Map (Degrees)")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        fig.colorbar(im, ax=ax, label="Slope (°)")
+        st.pyplot(fig)
 
     with tab3:
         st.subheader("Aspect Map")
-        fig3, ax3 = plt.subplots(figsize=(8, 6))
-        im3 = ax3.imshow(
-            aspect, 
-            extent=(x.min(), x.max(), y.min(), y.max()),
-            origin='lower', 
-            cmap='twilight', 
-            aspect='auto'
-        )
-        ax3.set_title("Aspect Map (Degrees)")
-        ax3.set_xlabel("X")
-        ax3.set_ylabel("Y")
-        fig3.colorbar(im3, ax=ax3, label="Aspect (°)")
-        st.pyplot(fig3)
+        fig, ax = plt.subplots(figsize=(8, 6))
+        im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                       origin='upper', cmap='twilight', aspect='auto')
+        ax.set_title("Aspect Map (Degrees)")
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        fig.colorbar(im, ax=ax, label="Aspect (°)")
+        st.pyplot(fig)
+
+    with tab4:
+        st.subheader("Flow Simulation Hydrograph")
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(t, Q, color="blue", lw=2)
+        ax.set_title("Simulated Runoff Hydrograph")
+        ax.set_xlabel("Time (hours)")
+        ax.set_ylabel("Flow (m³/hr)")
+        st.pyplot(fig)
+        st.markdown(f"**Peak Flow:** {Q_peak:.2f} m³/hr")
+        st.markdown(f"**Total Runoff Volume:** {V_runoff:.2f} m³")
+
+    with tab5:
+        st.subheader("Retention Time Calculation")
+        if retention_time is not None:
+            st.markdown(f"**Estimated Retention Time:** {retention_time:.2f} hours")
+        else:
+            st.warning("Effective runoff is zero; please check your input parameters.")
+
+    with tab6:
+        st.subheader("Export GeoTIFF Products")
+        dem_tiff = export_geotiff(grid_z, transform)
+        slope_tiff = export_geotiff(slope, transform)
+        aspect_tiff = export_geotiff(aspect, transform)
+        st.download_button("Download DEM GeoTIFF", dem_tiff, file_name="DEM.tif", mime="image/tiff")
+        st.download_button("Download Slope GeoTIFF", slope_tiff, file_name="Slope.tif", mime="image/tiff")
+        st.download_button("Download Aspect GeoTIFF", aspect_tiff, file_name="Aspect.tif", mime="image/tiff")
+
+    with tab7:
+        st.subheader("Nutrient Leaching Simulation")
+        st.markdown("""
+        This simulation estimates the mass of soil nutrients (in kg) that could be washed out 
+        from the catchment due to a rainfall event, considering the effects of vegetation 
+        retention and soil erosion.
+        """)
+        st.markdown(f"**Soil Nutrient Content:** {soil_nutrient} kg/ha")
+        st.markdown(f"**Vegetation Retention Factor:** {veg_retention:.2f}")
+        st.markdown(f"**Soil Erosion Factor:** {erosion_factor:.2f}")
+        st.markdown(f"**Catchment Area:** {catchment_area} ha")
+        st.markdown(f"**Estimated Nutrient Load Exported:** {nutrient_load:.2f} kg")
+        if nutrient_load > 100:
+            st.warning("High nutrient export may increase the risk of eutrophication in downstream water bodies.")
+        else:
+            st.success("Estimated nutrient export is moderate. Further analysis is recommended.")
 else:
-    st.info("Please upload an STL file to generate the hydrogeological maps.")
+    st.info("Please upload an STL file to generate the hydrogeological maps and analyses.")
