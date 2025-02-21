@@ -9,6 +9,66 @@ import rasterio
 from rasterio.transform import from_origin
 
 # -----------------------------------------------------------------------------
+# Custom CSS for a professional look
+# -----------------------------------------------------------------------------
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+<style>
+/* Set a modern, clean background color and font for the entire app */
+body {
+    background-color: #f0f2f6;
+    color: #333;
+    font-family: 'Roboto', sans-serif;
+}
+
+/* Main container padding */
+.reportview-container .main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
+/* Title styling */
+h1 {
+    text-align: center;
+    font-size: 3rem;
+    color: #2e7bcf;
+}
+
+/* Sidebar styling: gradient background and white text */
+[data-testid="stSidebar"] > div:first-child {
+    background: linear-gradient(180deg, #2e7bcf, #1a5a99);
+    color: white;
+}
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] .css-1d391kg p {
+    color: white;
+}
+
+/* Style for tabs to remove borders and add spacing */
+div.stTabs > div {
+    border: none;
+}
+
+/* Button styling override */
+.stButton>button {
+    background-color: #2e7bcf;
+    color: white;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    padding: 0.5rem 1rem;
+}
+
+/* Download button customization */
+.css-1emrehy.edgvbvh3 { 
+    background-color: #2e7bcf !important; 
+    color: white !important;
+    border: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
 # Page configuration and header with logo
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
@@ -102,23 +162,21 @@ if uploaded_file is not None:
     z_adj = (z_raw * scale_factor) + elevation_offset
 
     # --- Transform raw x,y coordinates to lon/lat ---
-    # Compute the raw extents
     x_min, x_max = x_raw.min(), x_raw.max()
     y_min, y_max = y_raw.min(), y_raw.max()
-    # Linearly map x_raw to the provided longitude range and y_raw to the latitude range.
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = top_bound - (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
 
     # Create a georeferenced grid using the provided bounding box
     xi = np.linspace(left_bound, right_bound, grid_res)
-    yi = np.linspace(top_bound, bottom_bound, grid_res)  # From high (top) to low (bottom)
+    yi = np.linspace(top_bound, bottom_bound, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
     # Interpolate the adjusted elevation values onto the grid using cubic interpolation.
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
-    # Determine grid spacing (approximation in degrees for small extents)
+    # Determine grid spacing (approximation in degrees)
     pixel_width = (right_bound - left_bound) / (grid_res - 1)
     pixel_height = (top_bound - bottom_bound) / (grid_res - 1)
 
@@ -139,7 +197,7 @@ if uploaded_file is not None:
     V_runoff = total_rain_m * area_m2 * runoff_coefficient  # Effective runoff volume (m³)
     Q_peak = V_runoff / event_duration  # Approximate peak flow (m³/hr)
 
-    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))  # time in hours (minute resolution)
+    t = np.linspace(0, simulation_duration, int(simulation_duration * 60))
     Q = np.zeros_like(t)
     for i, time in enumerate(t):
         if time <= event_duration:
@@ -150,10 +208,7 @@ if uploaded_file is not None:
     # -----------------------------------------------------------------------------
     # Retention Time Calculation (Using effective runoff)
     # -----------------------------------------------------------------------------
-    if V_runoff > 0:
-        retention_time = storage_volume / (V_runoff / event_duration)
-    else:
-        retention_time = None
+    retention_time = storage_volume / (V_runoff / event_duration) if V_runoff > 0 else None
 
     # -----------------------------------------------------------------------------
     # Nutrient Leaching Simulation
@@ -190,7 +245,6 @@ if uploaded_file is not None:
 
     with tab1:
         st.subheader("DEM Heatmap")
-        # Plot with vmin and vmax forcing the color scale from 0 to 500 m.
         fig, ax = plt.subplots(figsize=(8, 6))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='hot', aspect='auto', vmin=0, vmax=500)
