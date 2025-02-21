@@ -139,6 +139,7 @@ risk_rain_weight = st.sidebar.slider("Rain Weight", 0.0, 2.0, 1.0, 0.1)
 risk_map = None       # Will hold risk map if burned area is provided
 burned_mask = None    # For burned-area analysis
 burned_polygons = []  # To store vector geometries if available
+burned_img_raw = None # To store raw burned TIFF values if applicable
 
 if uploaded_stl is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
@@ -252,12 +253,12 @@ if uploaded_stl is not None:
                     tmp_tif.write(uploaded_burned.read())
                     tif_filename = tmp_tif.name
                 with rasterio.open(tif_filename) as src:
-                    # If src.crs is missing, assume EPSG:4326
                     src_crs = src.crs if src.crs is not None else "EPSG:4326"
-                    burned_img = src.read(1)
+                    burned_img_raw = src.read(1)
+                    st.write("Raw burned TIFF values: min", burned_img_raw.min(), "max", burned_img_raw.max())
                     src_transform = src.transform
-                    # Normalize the burned_img to preserve regional variation
-                    burned_img_norm = (burned_img - burned_img.min()) / (burned_img.max() - burned_img.min() + 1e-9)
+                    # Normalize the raw values to [0, 1]
+                    burned_img_norm = (burned_img_raw - burned_img_raw.min()) / (burned_img_raw.max() - burned_img_raw.min() + 1e-9)
                     burned_mask_temp = burned_img_norm
                     burned_mask_resampled = np.empty(grid_z.shape, dtype=np.float32)
                     reproject(
@@ -375,7 +376,7 @@ if uploaded_stl is not None:
         "Flow Simulation", "Retention Time", "GeoTIFF Export",
         "Nutrient Leaching", "Burned Area Analysis", "Burned Risk",
         "Flow Accumulation", "Topographic Wetness Index", "Curvature Analysis",
-        "Scenario GIFs"
+        "Scenario GIFs", "Raw Burned TIFF"
     ])
 
     with tabs[0]:
@@ -567,5 +568,21 @@ if uploaded_stl is not None:
         if risk_gif is not None:
             st.markdown("**Risk Scenario**")
             st.image(create_placeholder_gif(risk_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="risk"), caption="Risk Scenario (Demo)")
+
+    with tabs[13]:
+        st.subheader("Raw Burned TIFF Data")
+        if burned_img_raw is not None:
+            # Rescale raw data for visualization
+            raw_vis = (burned_img_raw - burned_img_raw.min()) / (burned_img_raw.max() - burned_img_raw.min() + 1e-9)
+            fig, ax = plt.subplots(figsize=(6,4))
+            im = ax.imshow(raw_vis, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                           origin='upper', cmap='gray', aspect='auto')
+            ax.set_title("Raw Burned TIFF")
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+            fig.colorbar(im, ax=ax, label="Normalized Value")
+            st.pyplot(fig)
+        else:
+            st.info("No raw burned TIFF data available.")
 else:
     st.info("Please upload an STL file to generate DEM and scenario analyses.")
