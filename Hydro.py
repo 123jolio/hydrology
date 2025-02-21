@@ -79,7 +79,7 @@ def process_stl_file(file_obj, scale, offset, grid_res, bounds):
     yi = np.linspace(top, bottom, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
-    grid_z = np.clip(grid_z, 0, 500)  # Adjust clip range as needed
+    grid_z = np.clip(grid_z, 0, 500)  # Adjust as needed
     
     dx = (right - left) / (grid_res - 1)
     dy = (top - bottom) / (grid_res - 1)
@@ -104,15 +104,14 @@ def compute_terrain_derivatives(grid_z, dx_meters, dy_meters):
 def compute_hydro_derivatives(grid_z, transform, cell_size_m):
     """
     Compute flow accumulation and TWI using pysheds.
-    Uses a fallback method if Grid.from_array is not available.
     Returns: (flow_acc, twi)
     """
     grid = Grid()
-    # Add the DEM data manually into the grid.
     grid.add_gridded_data(grid_z, data_name='dem', affine=transform, nodata=-9999, crs={'init':'epsg:4326'})
     grid.fill_depressions(data='dem', out_name='filled_dem')
     grid.flowdir(data='filled_dem', out_name='flow_dir')
     flow_acc = grid.accumulation(data='flow_dir')
+    
     slope_rad = np.radians(np.gradient(grid_z, cell_size_m)[0])
     twi = np.log((flow_acc * cell_size_m**2) / (np.tan(np.clip(slope_rad, 0.01, np.inf)) + 1e-9))
     return flow_acc, twi
@@ -175,12 +174,12 @@ Outputs are cached for performance and exported as GeoTIFFs.
 # Define geographic bounds (EPSG:4326)
 BOUNDS = (27.906069, 36.92337189, 28.045764, 36.133509)  # (left, top, right, bottom)
 
-# Sidebar: Option to use local files from the same folder as Hydro.py
+# Sidebar: Option to use local files (files in the same folder as Hydro.py)
 use_local = st.sidebar.checkbox("Use local files (same folder as Hydro.py)", value=False)
 
 if use_local:
     script_dir = os.path.dirname(__file__)
-    # EXACT filenames from your provided photo
+    # Exact filenames as in your repository:
     stl_file_path = os.path.join(script_dir, "3d layout.stl")
     burned_file_path = os.path.join(script_dir, "burned areas.tif")
     
@@ -203,7 +202,6 @@ else:
     stl_file_obj = st.file_uploader("Upload STL File (for DEM)", type=["stl"])
     burned_file_obj = st.file_uploader("Upload Burned-Area Data (KMZ, TIFF, JPG, PNG)", type=["kmz", "tif", "tiff", "jpg", "png"])
 
-# Sidebar Parameters
 st.sidebar.header("Terrain Parameters")
 scale = st.sidebar.slider("Elevation Scale", 0.1, 5.0, 1.0, help="Scale factor for STL elevation.")
 offset = st.sidebar.slider("Elevation Offset (m)", -100.0, 100.0, 0.0, help="Vertical adjustment for DEM.")
@@ -221,7 +219,6 @@ risk_slope_w = st.sidebar.slider("Slope Weight", 0.0, 2.0, 1.0, help="Weight for
 risk_dem_w = st.sidebar.slider("DEM Weight", 0.0, 2.0, 1.0, help="Weight for elevation in risk calculation.")
 risk_burn_w = st.sidebar.slider("Burned Area Weight", 0.0, 2.0, 1.0, help="Weight for burned areas in risk.")
 
-# Input Validation
 if stl_file_obj is None:
     st.error("No STL file provided. Please either enable 'Use local files' or upload an STL.")
     st.stop()
@@ -245,7 +242,7 @@ with st.spinner("Processing STL file..."):
     flow_acc, twi = compute_hydro_derivatives(grid_z, transform, cell_size_m)
 
 # -----------------------------------------------------------------------------
-# Processing: Burned-Area Data (if provided)
+# Processing: Burned-Area Data
 # -----------------------------------------------------------------------------
 burned_mask = None
 if burned_file_obj is not None:
@@ -342,7 +339,7 @@ with tabs[0]:
         ax.set_title("Slope")
         fig.colorbar(im, ax=ax, label="Slope (°)")
         st.pyplot(fig)
-    
+        
     col3, col4 = st.columns(2)
     with col3:
         fig, ax = plt.subplots(figsize=(5, 4))
@@ -370,7 +367,7 @@ with tabs[1]:
         st.write(f"Total Runoff Volume: {V_runoff:.2f} m³")
     with col2:
         st.image(create_gif(grid_z / grid_z.max(), title="Flow Animation"), caption="Flow Animation")
-    
+        
     col3, col4 = st.columns(2)
     with col3:
         fig, ax = plt.subplots(figsize=(5, 4))
