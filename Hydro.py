@@ -256,8 +256,10 @@ if uploaded_stl is not None:
                     src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     burned_img = src.read(1)
                     src_transform = src.transform
-                    burned_mask_temp = (burned_img > 128).astype(np.uint8)
-                    burned_mask_resampled = np.empty(grid_z.shape, dtype=np.uint8)
+                    # Normalize the burned_img to preserve regional variation
+                    burned_img_norm = (burned_img - burned_img.min()) / (burned_img.max() - burned_img.min() + 1e-9)
+                    burned_mask_temp = burned_img_norm
+                    burned_mask_resampled = np.empty(grid_z.shape, dtype=np.float32)
                     reproject(
                         source=burned_mask_temp,
                         destination=burned_mask_resampled,
