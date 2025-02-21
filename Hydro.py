@@ -22,7 +22,6 @@ from pysheds.grid import Grid
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
 
-# Minimal professional CSS
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
 <style>
@@ -179,7 +178,6 @@ use_local = st.sidebar.checkbox("Use local files (same folder as Hydro.py)", val
 
 if use_local:
     script_dir = os.path.dirname(__file__)
-    # Exact filenames as in your repository:
     stl_file_path = os.path.join(script_dir, "3d layout.stl")
     burned_file_path = os.path.join(script_dir, "burned areas.tif")
     
@@ -292,7 +290,10 @@ if burned_file_obj is not None:
                 burned_mask = ((burned_img[..., 0] > 150) &
                                (burned_img[..., 1] < 100) &
                                (burned_img[..., 2] < 100)).astype(np.uint8)
-                burned_mask = np.array(Image.fromarray(burned_mask).resize((grid_z.shape[1], grid_z.shape[0]), resample=Image.NEAREST))
+                burned_mask = np.array(Image.fromarray(burned_mask).resize(
+                    (grid_z.shape[1], grid_z.shape[0]),
+                    resample=Image.NEAREST
+                ))
             except Exception as e:
                 st.warning(f"Error reading burned image: {e}")
         else:
@@ -318,7 +319,8 @@ area_m2 = area_ha * 10000
 V_runoff = (rainfall / 1000) * duration * area_m2 * runoff_coeff
 Q_peak = V_runoff / duration
 t = np.linspace(0, 6, int(6 * 60))
-Q = np.where(t <= duration, Q_peak * (t / duration), Q_peak * np.exp(-recession * (t - duration)))
+Q = np.where(t <= duration, Q_peak * (t / duration),
+             Q_peak * np.exp(-recession * (t - duration)))
 
 # -----------------------------------------------------------------------------
 # Display Results in Tabs
@@ -339,7 +341,7 @@ with tabs[0]:
         ax.set_title("Slope")
         fig.colorbar(im, ax=ax, label="Slope (°)")
         st.pyplot(fig)
-        
+    
     col3, col4 = st.columns(2)
     with col3:
         fig, ax = plt.subplots(figsize=(5, 4))
@@ -367,7 +369,7 @@ with tabs[1]:
         st.write(f"Total Runoff Volume: {V_runoff:.2f} m³")
     with col2:
         st.image(create_gif(grid_z / grid_z.max(), title="Flow Animation"), caption="Flow Animation")
-        
+    
     col3, col4 = st.columns(2)
     with col3:
         fig, ax = plt.subplots(figsize=(5, 4))
@@ -414,5 +416,3 @@ with tabs[3]:
         st.download_button("Download Burned Mask GeoTIFF", export_geotiff(burned_mask, transform), "burned_mask.tif")
         if risk_map is not None:
             st.download_button("Download Risk Map GeoTIFF", export_geotiff(risk_map, transform), "risk_map.tif")
-else:
-    st.info("Please upload an STL file (or use local files) to begin analysis.")
