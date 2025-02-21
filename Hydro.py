@@ -11,25 +11,12 @@ from rasterio.transform import from_origin
 # MUST be the very first Streamlit command!
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
 
-# Custom CSS for an ultra-cool, professional UI
+# -----------------------------------------------------------------------------
+# Custom CSS for a professional, ultra-cool look
+# -----------------------------------------------------------------------------
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
 <style>
-/* Global styling */
-body {
-    background-color: #f0f2f6;
-    color: #333;
-    font-family: 'Roboto', sans-serif;
-}
-
-/* Main container padding */
-.reportview-container .main .block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-    padding-left: 2rem;
-    padding-right: 2rem;
-}
-
 /* Title styling */
 h1 {
     text-align: center;
@@ -122,7 +109,7 @@ recession_rate = st.sidebar.number_input("Recession Rate (1/hr)", value=0.5, ste
 simulation_duration = st.sidebar.number_input("Hydrograph Simulation Duration (hr)", value=6.0, step=0.5)
 
 # -----------------------------------------------------------------------------
-# Sidebar: Retention Time Parameter
+# Sidebar: Retention Time Parameters
 # -----------------------------------------------------------------------------
 st.sidebar.header("Retention Time Parameters")
 storage_volume = st.sidebar.number_input("Storage Volume (m³)", value=5000.0, step=100.0)
