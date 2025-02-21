@@ -19,3 +19,4 @@ openpyxl
 streamlit-drawable-canvas
 # Do NOT include richdem
 numpy-stl
+fastkml
