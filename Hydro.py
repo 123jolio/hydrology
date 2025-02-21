@@ -238,9 +238,11 @@ if uploaded_stl is not None:
     V_runoff = total_rain_m * area_m2 * runoff_coeff
     Q_peak = V_runoff / event_duration
     t = np.linspace(0, simulation_hours, int(simulation_hours * 60))
-    Q = np.array([Q_peak * (time/event_duration) if time<= event_duration 
-                  else Q_peak * np.exp(-recession_rate*(time-event_duration)) 
-                  for time in t])
+    Q = np.array([
+        Q_peak * (time / event_duration) if time <= event_duration
+        else Q_peak * np.exp(-recession_rate * (time - event_duration))
+        for time in t
+    ])
     retention_time = storage_volume / (V_runoff / event_duration) if V_runoff > 0 else None
     nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
@@ -258,11 +260,13 @@ if uploaded_stl is not None:
                     burned_img_raw = src.read()
                     src_transform = src.transform
                     if burned_img_raw.shape[0] >= 3:
+                        # Multi-band: interpret red channel > 150, etc.
                         red = burned_img_raw[0]
                         green = burned_img_raw[1]
                         blue = burned_img_raw[2]
                         burned_mask_raw = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
                     else:
+                        # Single-band: threshold
                         band = burned_img_raw[0]
                         norm_band = (band - band.min()) / (band.max() - band.min() + 1e-9)
                         burned_mask_raw = (norm_band > 0.5).astype(np.float32)
@@ -319,23 +323,44 @@ if uploaded_stl is not None:
         with st.expander("DEM Settings"):
             dem_vmin = st.number_input("DEM Minimum (m)", value=global_dem_min, step=1.0)
             dem_vmax = st.number_input("DEM Maximum (m)", value=global_dem_max, step=1.0)
-        fig, ax = plt.subplots(figsize=(8,5))
-        # Plot DEM
-        im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax)
+        with st.expander("Figure Aspect & Size"):
+            aspect_choice = st.selectbox("Aspect Mode", ["auto", "equal"], index=0)
+            base_width = st.slider("Base figure width (inches)", 4, 20, 6)
+            # Compute ratio from bounding box
+            lon_range = right_bound - left_bound
+            lat_range = top_bound - bottom_bound
+            ratio = lat_range / lon_range
+            base_height = base_width * ratio
+
+        fig, ax = plt.subplots(figsize=(base_width, base_height))
+        im = ax.imshow(
+            grid_z,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap='hot',
+            vmin=dem_vmin,
+            vmax=dem_vmax,
+            aspect=aspect_choice  # 'auto' or 'equal'
+        )
         # If burned mask exists, normalize it and overlay
         if burned_mask is not None:
             burned_norm = (burned_mask - burned_mask.min()) / (burned_mask.max() - burned_mask.min() + 1e-9)
             ax.imshow(burned_norm, extent=(left_bound, right_bound, bottom_bound, top_bound),
                       origin='lower', cmap='Reds', alpha=0.4)
             # Optional contour outlining burned areas
-            ax.contour(burned_norm, levels=[0.5], colors='darkred',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.contour(
+                burned_norm,
+                levels=[0.5],
+                colors='darkred',
+                extent=(left_bound, right_bound, bottom_bound, top_bound)
+            )
         # Plot flow vectors
         step = max(1, global_grid_res // 20)
-        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
-                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
-                  color='blue', scale=1e5, width=0.003)
+        ax.quiver(
+            grid_x[::step, ::step], grid_y[::step, ::step],
+            -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+            color='blue', scale=1e5, width=0.003
+        )
         ax.set_title("DEM with Flow Vectors and Burned-Area Overlay", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -350,8 +375,14 @@ if uploaded_stl is not None:
             slope_vmax = st.number_input("Slope Maximum (°)", value=70.0, step=1.0)
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno", "magma"])
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
+        im = ax.imshow(
+            slope,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap=slope_cmap,
+            vmin=slope_vmin,
+            vmax=slope_vmax
+        )
         ax.set_title("Slope (°)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -366,8 +397,14 @@ if uploaded_stl is not None:
             aspect_vmax = st.number_input("Aspect Maximum (°)", value=360.0, step=1.0)
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv", "cool"])
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
+        im = ax.imshow(
+            aspect,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap=aspect_cmap,
+            vmin=aspect_vmin,
+            vmax=aspect_vmax
+        )
         ax.set_title("Aspect (°)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -409,8 +446,14 @@ if uploaded_stl is not None:
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
             flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(adjusted_flow_acc)), step=1.0)
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax)
+        im = ax.imshow(
+            adjusted_flow_acc,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap='viridis',
+            vmin=flowacc_vmin,
+            vmax=flowacc_vmax
+        )
         ax.set_title("Flow Accumulation", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -424,8 +467,14 @@ if uploaded_stl is not None:
             twi_vmin = st.number_input("TWI Min", value=float(np.min(twi)), step=0.1)
             twi_vmax = st.number_input("TWI Max", value=float(np.max(twi)), step=0.1)
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(twi, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax)
+        im = ax.imshow(
+            twi,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap='coolwarm',
+            vmin=twi_vmin,
+            vmax=twi_vmax
+        )
         ax.set_title("TWI (Adjusted for Burned Areas)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -439,8 +488,14 @@ if uploaded_stl is not None:
             curv_vmin = st.number_input("Curvature Min", value=float(np.min(curvature)), step=0.1)
             curv_vmax = st.number_input("Curvature Max", value=float(np.max(curvature)), step=0.1)
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(curvature, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax)
+        im = ax.imshow(
+            curvature,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap='Spectral',
+            vmin=curv_vmin,
+            vmax=curv_vmax
+        )
         ax.set_title("Curvature (Laplacian Convolution)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -451,11 +506,19 @@ if uploaded_stl is not None:
     with tabs[9]:
         st.subheader("Composite Vulnerability Index")
         fig, ax = plt.subplots(figsize=(8,5))
-        im = ax.imshow(vulnerability, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='inferno')
+        im = ax.imshow(
+            vulnerability,
+            extent=(left_bound, right_bound, bottom_bound, top_bound),
+            origin='lower',
+            cmap='inferno'
+        )
         threshold = st.number_input("Vulnerability Threshold", value=float(np.percentile(vulnerability, 80)), step=0.01)
-        ax.contour(vulnerability, levels=[threshold], colors='white',
-                   extent=(left_bound, right_bound, bottom_bound, top_bound))
+        ax.contour(
+            vulnerability,
+            levels=[threshold],
+            colors='white',
+            extent=(left_bound, right_bound, bottom_bound, top_bound)
+        )
         ax.set_title("Vulnerability (Weighted Slope, TWI & Burned-Area)", fontsize=14, fontweight='bold')
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -469,10 +532,19 @@ if uploaded_stl is not None:
             gif_fps = st.number_input("GIF FPS", value=2, step=1)
         st.subheader("Scenario-Based GIF Animations")
         st.markdown("**Flow Scenario**")
-        st.image(create_placeholder_gif(flow_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="flow"), caption="Flow Scenario (Demo)")
+        st.image(
+            create_placeholder_gif(flow_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="flow"),
+            caption="Flow Scenario (Demo)"
+        )
         st.markdown("**Retention Scenario**")
-        st.image(create_placeholder_gif(retention_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="retention"), caption="Retention Scenario (Demo)")
+        st.image(
+            create_placeholder_gif(retention_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="retention"),
+            caption="Retention Scenario (Demo)"
+        )
         st.markdown("**Nutrient Scenario**")
-        st.image(create_placeholder_gif(nutrient_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="nutrient"), caption="Nutrient Scenario (Demo)")
+        st.image(
+            create_placeholder_gif(nutrient_placeholder, frames=int(gif_frames), fps=int(gif_fps), scenario_name="nutrient"),
+            caption="Nutrient Scenario (Demo)"
+        )
 else:
     st.info("Please upload an STL file via the sidebar to begin analysis.")
