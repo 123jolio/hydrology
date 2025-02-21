@@ -19,8 +19,8 @@ except Exception:
 
 st.title("Advanced Hydrogeology & DEM Analysis")
 st.markdown("""
-This application generates a high-quality Digital Elevation Model (DEM) from an STL file, computes advanced hydrogeological maps (slope and aspect), simulates a runoff hydrograph, and calculates a retention time estimate.  
-All outputs can be exported as georeferenced GeoTIFF files.  
+This application generates a high-quality Digital Elevation Model (DEM) from an STL file, computes advanced hydrogeological maps (slope and aspect), simulates a runoff hydrograph, calculates a retention time estimate, and estimates potential nutrient leaching.  
+All outputs can be exported as georeferenced GeoTIFF files.
 """)
 
 # -----------------------------------------------------------------------------
@@ -47,7 +47,7 @@ elevation_offset = st.sidebar.slider("Raw Elevation Offset (m)", -100.0, 100.0, 
                                      help="Add this offset to all raw elevation values")
 st.sidebar.header("DEM Clipping")
 dem_min = st.sidebar.number_input("DEM Minimum Elevation (m)", value=0.0, step=1.0)
-dem_max = st.sidebar.number_input("DEM Maximum Elevation (m)", value=400.0, step=1.0)
+dem_max = st.sidebar.number_input("DEM Maximum Elevation (m)", value=500.0, step=1.0)  # Default now 500 m
 grid_res = st.sidebar.number_input("Grid Resolution", 100, 1000, 500, 50)
 
 # -----------------------------------------------------------------------------
@@ -66,6 +66,16 @@ simulation_duration = st.sidebar.number_input("Hydrograph Simulation Duration (h
 # -----------------------------------------------------------------------------
 st.sidebar.header("Retention Time Parameters")
 storage_volume = st.sidebar.number_input("Storage Volume (m³)", value=5000.0, step=100.0)
+
+# -----------------------------------------------------------------------------
+# Sidebar: Nutrient Leaching Parameters
+# -----------------------------------------------------------------------------
+st.sidebar.header("Nutrient Leaching Parameters")
+soil_nutrient = st.sidebar.number_input("Soil Nutrient Content (kg/ha)", value=50.0, step=1.0)
+veg_retention = st.sidebar.slider("Vegetation Retention Factor", 0.0, 1.0, 0.7, 0.05,
+                                  help="Fraction of soil nutrients retained by vegetation (1 = full retention)")
+erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05,
+                                   help="Fraction of soil nutrients mobilized due to erosion")
 
 # -----------------------------------------------------------------------------
 # Process STL file and generate DEM & Hydro Maps
@@ -123,12 +133,11 @@ if uploaded_file is not None:
     # Effective runoff volume (m³) using the runoff coefficient
     V_runoff = total_rain_m * area_m2 * runoff_coefficient
     # Approximate peak flow (m³/hr) using a unit hydrograph concept:
-    # Here, we approximate Q_peak as the average runoff rate during the event.
     Q_peak = V_runoff / event_duration
 
-    # Build a more professional hydrograph:
-    # - A rising limb: assume linear increase from 0 to Q_peak over the event duration.
-    # - A recession limb: assume an exponential decay after the event.
+    # Build a professional hydrograph:
+    # - Rising limb: linear increase from 0 to Q_peak during the rainfall event.
+    # - Recession limb: exponential decay after the event.
     t = np.linspace(0, simulation_duration, int(simulation_duration * 60))  # time in hours (with minute resolution)
     Q = np.zeros_like(t)
     for i, time in enumerate(t):
@@ -140,11 +149,17 @@ if uploaded_file is not None:
     # -----------------------------------------------------------------------------
     # Retention Time Calculation (Using effective runoff)
     # -----------------------------------------------------------------------------
-    # Average runoff rate (m³/hr) is approximated as V_runoff / event_duration.
     if V_runoff > 0:
         retention_time = storage_volume / (V_runoff / event_duration)
     else:
         retention_time = None
+
+    # -----------------------------------------------------------------------------
+    # Nutrient Leaching Simulation
+    # -----------------------------------------------------------------------------
+    # Simplified model: Estimate exported nutrient load (kg) from the catchment.
+    # Nutrient Load (kg) = Soil Nutrient Content (kg/ha) * (1 - Vegetation Retention Factor) * Soil Erosion Factor * Catchment Area (ha)
+    nutrient_load = soil_nutrient * (1 - veg_retention) * erosion_factor * catchment_area
 
     # -----------------------------------------------------------------------------
     # Function to export arrays as GeoTIFF using rasterio
@@ -169,20 +184,21 @@ if uploaded_file is not None:
     # -----------------------------------------------------------------------------
     # Display results in multiple tabs
     # -----------------------------------------------------------------------------
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "DEM Heatmap", "Slope Map", "Aspect Map",
-        "Flow Simulation", "Retention Time", "Export GeoTIFFs"
+        "Flow Simulation", "Retention Time", "Export GeoTIFFs", "Nutrient Leaching"
     ])
 
     with tab1:
         st.subheader("DEM Heatmap")
+        # Force the colormap to span 0 to 500 m (plot and legend)
         fig, ax = plt.subplots(figsize=(8, 6))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='upper', cmap='hot', aspect='auto')
+                       origin='upper', cmap='hot', aspect='auto', vmin=0, vmax=500)
         ax.set_title("DEM Heatmap (Adjusted Elevation)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Elevation (m)")
+        fig.colorbar(im, ax=ax, label="Elevation (m) [0 - 500 m]")
         st.pyplot(fig)
 
     with tab2:
@@ -233,5 +249,22 @@ if uploaded_file is not None:
         st.download_button("Download DEM GeoTIFF", dem_tiff, file_name="DEM.tif", mime="image/tiff")
         st.download_button("Download Slope GeoTIFF", slope_tiff, file_name="Slope.tif", mime="image/tiff")
         st.download_button("Download Aspect GeoTIFF", aspect_tiff, file_name="Aspect.tif", mime="image/tiff")
+
+    with tab7:
+        st.subheader("Nutrient Leaching Simulation")
+        st.markdown("""
+        This simulation estimates the mass of soil nutrients (in kg) that could be washed out 
+        from the catchment due to a rainfall event, considering the effects of vegetation 
+        retention and soil erosion.
+        """)
+        st.markdown(f"**Soil Nutrient Content:** {soil_nutrient} kg/ha")
+        st.markdown(f"**Vegetation Retention Factor:** {veg_retention:.2f}")
+        st.markdown(f"**Soil Erosion Factor:** {erosion_factor:.2f}")
+        st.markdown(f"**Catchment Area:** {catchment_area} ha")
+        st.markdown(f"**Estimated Nutrient Load Exported:** {nutrient_load:.2f} kg")
+        if nutrient_load > 100:
+            st.warning("High nutrient export may increase the risk of eutrophication in downstream water bodies.")
+        else:
+            st.success("Estimated nutrient export is moderate. Further analysis is recommended.")
 else:
     st.info("Please upload an STL file to generate the hydrogeological maps and analyses.")
