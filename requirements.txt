@@ -1,9 +1,20 @@
 streamlit
 geopandas
-richdem
-matplotlib
 numpy
 scipy
-pyproj
+matplotlib
+pysheds
+affine
+dash
+dash-daq
+pandas
+plotly
+rasterio
 shapely
-fiona
+folium
+scikit-image
+simplekml
+requests
+openpyxl
+streamlit-drawable-canvas
+# Do NOT include richdem
