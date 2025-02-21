@@ -115,7 +115,7 @@ if lakes.empty:
     gdf_lake['geometry'] = gdf_lake['geometry'].apply(convert_geometry)
     lakes = gdf_lake[gdf_lake.geometry.type.isin(['Polygon', 'MultiPolygon'])]
 
-# If still no polygon, try buffering any line geometries
+# If still no polygon, try buffering any line geometries to force a polygon
 if lakes.empty:
     st.warning("No lake polygon found after conversion. Attempting to buffer line geometries.")
     
@@ -136,17 +136,26 @@ points = []
 values = []
 for idx, row in contours.iterrows():
     geom = row.geometry
+    # Handle both MultiLineString and LineString geometries
     if geom.type == 'MultiLineString':
         lines = list(geom)
     else:
         lines = [geom]
     for line in lines:
         for coord in line.coords:
+            # If the coordinate has a z value, use it
             if len(coord) >= 3:
                 x, y, z = coord[:3]
             else:
                 x, y = coord
+                # Try to get elevation from an attribute 'elevation'
                 z = row.get('elevation', None)
+                # Fallback: try to parse the 'Name' field as a number
+                if z is None and 'Name' in row and row['Name']:
+                    try:
+                        z = float(row['Name'])
+                    except ValueError:
+                        z = None
                 if z is None:
                     continue
             points.append((x, y))
