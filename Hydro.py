@@ -11,6 +11,7 @@ from rasterio.warp import reproject, Resampling
 import imageio  # for GIF creation
 import os
 from PIL import Image
+from scipy.ndimage import convolve  # For improved curvature calculation
 
 # -----------------------------------------------------------------------------
 # 1. MUST be the very first Streamlit command!
@@ -196,17 +197,15 @@ if uploaded_stl is not None:
                     src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     burned_img_raw = src.read()
                     src_transform = src.transform
-                    # If the image has multiple bands, assume it is a color image.
-                    # We interpret burned areas as those where the red channel is high while green and blue are low.
+                    # If the image has multiple bands, assume a color image.
+                    # Assume red regions (high red, low green/blue) indicate burned areas.
                     if burned_img_raw.shape[0] >= 3:
                         red = burned_img_raw[0]
                         green = burned_img_raw[1]
                         blue = burned_img_raw[2]
-                        # Create a binary mask: burned if red > 150 and green and blue below 100.
                         burned_mask_raw = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
                     else:
-                        # Otherwise, assume a single band where higher values indicate burned.
-                        # Normalize and then threshold (e.g., > 0.5 after normalization).
+                        # Single-band: normalize and threshold.
                         band = burned_img_raw[0]
                         norm_band = (band - band.min()) / (band.max() - band.min() + 1e-9)
                         burned_mask_raw = (norm_band > 0.5).astype(np.float32)
@@ -257,19 +256,24 @@ if uploaded_stl is not None:
     flow_acc = compute_flow_accumulation(grid_z)
     # Incorporate burned-area effects on flow accumulation:
     if burned_mask is not None:
-        # In burned areas, increase the effective contributing area
         adjusted_flow_acc = flow_acc * (1 + burn_runoff_factor * burned_mask)
     else:
         adjusted_flow_acc = flow_acc
 
     slope_radians = np.radians(slope)
     cell_area = dx_meters * dy_meters
-    # Modified TWI Calculation using adjusted flow accumulation:
-    # TWI = ln(((adjusted_flow_acc + 1) * cell_area) / (tan(slope_radians) + 0.001))
-    twi = np.log(((adjusted_flow_acc + 1) * cell_area) / (np.tan(slope_radians) + 0.001))
-    d2z_dx2 = np.gradient(dz_dx, dx_meters, axis=1)
-    d2z_dy2 = np.gradient(dz_dy, dy_meters, axis=0)
-    curvature = d2z_dx2 + d2z_dy2
+
+    # ---- Improved TWI Calculation ----
+    A_eff = adjusted_flow_acc * cell_area
+    epsilon = 0.05  # small constant to avoid division by zero
+    twi = np.log((A_eff + 1) / (np.tan(slope_radians) + epsilon))
+
+    # ---- Improved Curvature Analysis using a Laplacian Convolution ----
+    # Create a 3x3 Laplacian kernel. If the grid is nearly square, we can approximate curvature as:
+    laplacian_kernel = np.array([[1,  1, 1],
+                                 [1, -8, 1],
+                                 [1,  1, 1]]) / (dx_meters * dy_meters)
+    curvature = convolve(grid_z, laplacian_kernel, mode='reflect')
 
     # -----------------------------------------------------------------------------
     # 10. Helper: Placeholder GIF creation function
@@ -316,7 +320,6 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax, aspect='auto')
-        # Overlay flow simulation with quiver arrows (pointing downhill)
         step = max(1, global_grid_res // 20)
         q = ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                       -dz_dx[::step, ::step], -dz_dy[::step, ::step],
@@ -405,7 +408,7 @@ if uploaded_stl is not None:
         st.write(f"Catchment Area: {catchment_area} ha")
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    # Tab 6: Flow Accumulation Map (using adjusted_flow_acc)
+    # Tab 6: Flow Accumulation Map
     with tabs[6]:
         with st.expander("Flow Accumulation Legend Boundaries"):
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
@@ -444,13 +447,13 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(curvature, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax, aspect='auto')
-        ax.set_title("Curvature (Laplacian)")
+        ax.set_title("Curvature (Laplacian Convolution)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         fig.colorbar(im, ax=ax, label="Curvature")
         st.pyplot(fig)
 
-    # Tab 9: Scenario GIFs (visualization only)
+    # Tab 9: Scenario GIFs
     with tabs[9]:
         with st.expander("GIF Settings"):
             gif_frames = st.number_input("GIF Frames", value=10, step=1)
