@@ -176,6 +176,7 @@ def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None,
 with tabs[0]:
     st.header("DEM & Flow Simulation")
     st.markdown("### Adjust the following parameters to customize your DEM and flow simulation:")
+    st.markdown("**Note**: Changes to these parameters will be applied when you click 'Run Analysis'.")
     
     with st.expander("Elevation Adjustments", expanded=True):
         st.markdown("**Scale Factor**: Multiplies elevation values to adjust vertical exaggeration (0.1–5.0). Higher values increase elevation height, affecting slope and flow patterns.")
@@ -430,14 +431,10 @@ with tabs[0]:
 
         with st.expander("Visualization Options", expanded=True):
             st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the DEM for context. Useful when analyzing fire impacts on hydrology. Changes update dynamically without restarting the app.")
-            if 'show_burned_dem' not in st.session_state:
-                st.session_state.show_burned_dem = False
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_dem, key="dem_burned", on_change=lambda: st.session_state.update(show_burned_dem=not st.session_state.show_burned_dem))
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
             
             st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the DEM more visible; higher values emphasize burned areas. Changes update dynamically.")
-            if 'burn_alpha_dem' not in st.session_state:
-                st.session_state.burn_alpha_dem = 0.5
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_dem, 0.1, key="dem_alpha", on_change=lambda x: st.session_state.update(burn_alpha_dem=x))
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
 
         # Dynamic map update
         fig, ax = plt.subplots()
@@ -519,14 +516,10 @@ with tabs[2]:
         slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
         
         st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the slope map for context. Useful for identifying erosion risks in burned regions. Changes update dynamically.")
-        if 'show_burned_slope' not in st.session_state:
-            st.session_state.show_burned_slope = False
-        show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_slope, key="slope_burned", on_change=lambda: st.session_state.update(show_burned_slope=not st.session_state.show_burned_slope))
+        show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
         
         st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the slope map more visible; higher values emphasize burned areas. Changes update dynamically.")
-        if 'burn_alpha_slope' not in st.session_state:
-            st.session_state.burn_alpha_slope = 0.5
-        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_slope, 0.1, key="slope_alpha", on_change=lambda x: st.session_state.update(burn_alpha_slope=x))
+        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         slope = st.session_state.processed_data['slope']
@@ -561,14 +554,10 @@ with tabs[3]:
         aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
         
         st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the aspect map for context. Useful for identifying flow paths in burned regions. Changes update dynamically.")
-        if 'show_burned_aspect' not in st.session_state:
-            st.session_state.show_burned_aspect = False
-        show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_aspect, key="aspect_burned", on_change=lambda: st.session_state.update(show_burned_aspect=not st.session_state.show_burned_aspect))
+        show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
         
         st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the aspect map more visible; higher values emphasize burned areas. Changes update dynamically.")
-        if 'burn_alpha_aspect' not in st.session_state:
-            st.session_state.burn_alpha_aspect = 0.5
-        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_aspect, 0.1, key="aspect_alpha", on_change=lambda x: st.session_state.update(burn_alpha_aspect=x))
+        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         aspect = st.session_state.processed_data['aspect']
@@ -634,14 +623,10 @@ with tabs[7]:
     
     with st.expander("Visualization Options", expanded=True):
         st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the flow accumulation map. Useful for identifying flow impacts in burned regions.")
-        if 'show_burned_flow' not in st.session_state:
-            st.session_state.show_burned_flow = False
-        show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_flow, key="flow_burned", on_change=lambda: st.session_state.update(show_burned_flow=not st.session_state.show_burned_flow))
+        show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
         
         st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make flow accumulation more visible; higher values emphasize burned areas. Changes update dynamically.")
-        if 'burn_alpha_flow' not in st.session_state:
-            st.session_state.burn_alpha_flow = 0.5
-        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_flow, 0.1, key="flow_alpha", on_change=lambda x: st.session_state.update(burn_alpha_flow=x))
+        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         flow_acc = st.session_state.processed_data['flow_acc']
@@ -666,14 +651,10 @@ with tabs[8]:
     
     with st.expander("Visualization Options", expanded=True):
         st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the TWI map. Useful for identifying wetness changes in burned regions.")
-        if 'show_burned_twi' not in st.session_state:
-            st.session_state.show_burned_twi = False
-        show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_twi, key="twi_burned", on_change=lambda: st.session_state.update(show_burned_twi=not st.session_state.show_burned_twi))
+        show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
         
         st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make TWI more visible; higher values emphasize burned areas. Changes update dynamically.")
-        if 'burn_alpha_twi' not in st.session_state:
-            st.session_state.burn_alpha_twi = 0.5
-        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_twi, 0.1, key="twi_alpha", on_change=lambda x: st.session_state.update(burn_alpha_twi=x))
+        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         twi = st.session_state.processed_data['twi']
@@ -698,14 +679,10 @@ with tabs[9]:
     
     with st.expander("Visualization Options", expanded=True):
         st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the curvature map. Useful for identifying curvature impacts in burned regions.")
-        if 'show_burned_curv' not in st.session_state:
-            st.session_state.show_burned_curv = False
-        show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_curv, key="curv_burned", on_change=lambda: st.session_state.update(show_burned_curv=not st.session_state.show_burned_curv))
+        show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
         
         st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make curvature more visible; higher values emphasize burned areas. Changes update dynamically.")
-        if 'burn_alpha_curv' not in st.session_state:
-            st.session_state.burn_alpha_curv = 0.5
-        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_curv, 0.1, key="curv_alpha", on_change=lambda x: st.session_state.update(burn_alpha_curv=x))
+        burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         curvature = st.session_state.processed_data['curvature']
@@ -914,7 +891,7 @@ with tabs[12]:
                     "Burned Mean": np.mean(burned_data),
                     "Unburned Mean": np.mean(unburned_data),
                     "Burned Median": np.median(burned_data),
-                    "Unburned Median": np.median(burned_data),
+                    "Unburned Median": np.median(unburned_data),
                     "Burned Std": np.std(burned_data),
                     "Unburned Std": np.std(unburned_data)
                 }
