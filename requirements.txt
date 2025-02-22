@@ -17,6 +17,8 @@ simplekml
 requests
 openpyxl
 streamlit-drawable-canvas
-# Do NOT include richdem
 numpy-stl
 fastkml
+streamlit-stl-viewer
+imageio
+Pillow
