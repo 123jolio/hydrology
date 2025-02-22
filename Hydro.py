@@ -14,6 +14,7 @@ from PIL import Image
 from scipy.ndimage import convolve, zoom
 from matplotlib.colors import ListedColormap
 import pandas as pd
+import math  # Added for radians conversion
 
 # -----------------------------------------------------------------------------
 # 1. Streamlit Page Config
@@ -144,7 +145,7 @@ left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.04
 
 # Calculate meters per degree for aspect ratio (defined globally)
 avg_lat = (top_bound + bottom_bound) / 2.0
-meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
+meters_per_deg_lon = 111320 * math.cos(math.radians(avg_lat))  # Corrected to math.radians
 meters_per_deg_lat = 111320
 
 # -----------------------------------------------------------------------------
@@ -202,199 +203,181 @@ with tabs[0]:
         st.markdown("**Band for Burned Area Threshold**: Selects the color band (Red, Green, Blue) for thresholding burned areas. Choose based on TIFF data; Red often highlights burned areas, but Green/Blue may work better for specific images.")
         band_to_threshold = st.selectbox("Band for Burned Area Threshold", ["Red", "Green", "Blue"], key="band_threshold")
 
-    # Process data once and store in session state
-    if 'processed_data' not in st.session_state or run_button:
-        try:
-            st.session_state.processed_data = None
-            if uploaded_stl:
-                # Retrieve parameters from session state
-                scale_val = st.session_state.get('scale', 1.0)
-                offset_val = st.session_state.get('offset', 0.0)
-                dem_min_val = st.session_state.get('dem_min', 0.0)
-                dem_max_val = st.session_state.get('dem_max', 500.0)
-                grid_res_val = st.session_state.get('grid_res', 500)
-                rainfall_val = st.session_state.get('rainfall', 30.0)
-                duration_val = st.session_state.get('duration', 2.0)
-                area_val = st.session_state.get('area', 10.0)
-                runoff_val = st.session_state.get('runoff', 0.5)
-                recession_val = st.session_state.get('recession', 0.5)
-                sim_hours_val = st.session_state.get('sim_hours', 6.0)
-                storage_val = st.session_state.get('storage', 5000.0)
-                burn_factor_val = st.session_state.get('burn_factor', 1.0)
-                burn_threshold_val = st.session_state.get('burn_threshold', 200)
-                band_to_threshold = st.session_state.get('band_threshold', "Red")
-                nutrient_val = st.session_state.get('nutrient', 50.0)
-                retention_val = st.session_state.get('retention', 0.7)
-                erosion_val = st.session_state.get('erosion', 0.3)
-                gif_frames_val = st.session_state.get('gif_frames', 10)
-                gif_fps_val = st.session_state.get('gif_fps', 2)
+    # Process data when "Run Analysis" is clicked
+    if run_button:
+        if uploaded_stl is None:
+            st.error("Please upload an STL file before running the analysis.")
+        else:
+            with st.spinner("Running analysis..."):
+                try:
+                    st.session_state.processed_data = None  # Clear previous data
+                    # Retrieve parameters from session state
+                    scale_val = st.session_state.get('scale', 1.0)
+                    offset_val = st.session_state.get('offset', 0.0)
+                    dem_min_val = st.session_state.get('dem_min', 0.0)
+                    dem_max_val = st.session_state.get('dem_max', 500.0)
+                    grid_res_val = st.session_state.get('grid_res', 500)
+                    rainfall_val = st.session_state.get('rainfall', 30.0)
+                    duration_val = st.session_state.get('duration', 2.0)
+                    area_val = st.session_state.get('area', 10.0)
+                    runoff_val = st.session_state.get('runoff', 0.5)
+                    recession_val = st.session_state.get('recession', 0.5)
+                    sim_hours_val = st.session_state.get('sim_hours', 6.0)
+                    storage_val = st.session_state.get('storage', 5000.0)
+                    burn_factor_val = st.session_state.get('burn_factor', 1.0)
+                    burn_threshold_val = st.session_state.get('burn_threshold', 200)
+                    band_to_threshold = st.session_state.get('band_threshold', "Red")
+                    nutrient_val = st.session_state.get('nutrient', 50.0)
+                    retention_val = st.session_state.get('retention', 0.7)
+                    erosion_val = st.session_state.get('erosion', 0.3)
+                    gif_frames_val = st.session_state.get('gif_frames', 10)
+                    gif_fps_val = st.session_state.get('gif_fps', 2)
 
-                # Load STL
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
-                    tmp_stl.write(uploaded_stl.read())
-                    stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
+                    # Load STL
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
+                        tmp_stl.write(uploaded_stl.read())
+                        stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
 
-                vertices = stl_mesh.vectors.reshape(-1, 3)
-                x_raw, y_raw, z_raw = vertices[:, 0], vertices[:, 1], vertices[:, 2]
-                z_adj = (z_raw * scale_val) + offset_val
+                    vertices = stl_mesh.vectors.reshape(-1, 3)
+                    x_raw, y_raw, z_raw = vertices[:, 0], vertices[:, 1], vertices[:, 2]
+                    z_adj = (z_raw * scale_val) + offset_val
 
-                # Interpolate DEM
-                x_min, x_max = x_raw.min(), x_raw.max()
-                y_min, y_max = y_raw.min(), y_raw.max()
-                lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
-                lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
-                xi = np.linspace(left_bound, right_bound, grid_res_val)
-                yi = np.linspace(bottom_bound, top_bound, grid_res_val)
-                grid_x, grid_y = np.meshgrid(xi, yi)
-                grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
-                grid_z = np.clip(grid_z, dem_min_val, dem_max_val)
+                    # Interpolate DEM
+                    x_min, x_max = x_raw.min(), x_raw.max()
+                    y_min, y_max = y_raw.min(), y_raw.max()
+                    lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
+                    lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
+                    xi = np.linspace(left_bound, right_bound, grid_res_val)
+                    yi = np.linspace(bottom_bound, top_bound, grid_res_val)
+                    grid_x, grid_y = np.meshgrid(xi, yi)
+                    grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
+                    grid_z = np.clip(grid_z, dem_min_val, dem_max_val)
 
-                # Derivatives
-                dx = (right_bound - left_bound) / (grid_res_val - 1)
-                dy = (top_bound - bottom_bound) / (grid_res_val - 1)
-                dx_meters, dy_meters = dx * meters_per_deg_lon, dy * meters_per_deg_lat
-                dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
-                slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
-                aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
+                    # Derivatives
+                    dx = (right_bound - left_bound) / (grid_res_val - 1)
+                    dy = (top_bound - bottom_bound) / (grid_res_val - 1)
+                    dx_meters, dy_meters = dx * meters_per_deg_lon, dy * meters_per_deg_lat
+                    dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
+                    slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
+                    aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-                # Burned area detection with reprojection if CRS is available
-                burned_mask = None
-                if uploaded_burned:
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
-                            tmp_tif.write(uploaded_burned.read())
-                            with rasterio.open(tmp_tif.name) as src:
-                                if src.count < 3:
-                                    st.warning("The burned area TIFF must be an RGB image with 3 bands.")
-                                else:
-                                    band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
-                                    band_data = src.read(band_index)
-                                    burned_mask = (band_data > burn_threshold_val).astype(np.float32)
-
-                                    # Attempt reprojection if CRS is available
-                                    src_crs = src.crs
-                                    if src_crs:
-                                        src_transform = src.transform
-                                        target_transform = from_origin(left_bound, top_bound, dx, dy)
-                                        target_crs = 'EPSG:4326'
-                                        target_shape = grid_z.shape
-                                        resampled_mask = np.empty(target_shape, dtype=np.float32)
-                                        reproject(
-                                            source=burned_mask,
-                                            destination=resampled_mask,
-                                            src_transform=src_transform,
-                                            src_crs=src_crs,
-                                            dst_transform=target_transform,
-                                            dst_crs=target_crs,
-                                            resampling=Resampling.nearest
-                                        )
-                                        burned_mask = resampled_mask
+                    # Burned area detection with reprojection if CRS is available
+                    burned_mask = None
+                    if uploaded_burned:
+                        try:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
+                                tmp_tif.write(uploaded_burned.read())
+                                with rasterio.open(tmp_tif.name) as src:
+                                    if src.count < 3:
+                                        st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                                     else:
-                                        st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
-                                        zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
-                                        burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
+                                        band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
+                                        band_data = src.read(band_index)
+                                        burned_mask = (band_data > burn_threshold_val).astype(np.float32)
 
-                    except Exception as e:
-                        st.error(f"Error processing burned area TIFF: {e}")
-                        burned_mask = None
+                                        # Attempt reprojection if CRS is available
+                                        src_crs = src.crs
+                                        if src_crs:
+                                            src_transform = src.transform
+                                            target_transform = from_origin(left_bound, top_bound, dx, dy)
+                                            target_crs = 'EPSG:4326'
+                                            target_shape = grid_z.shape
+                                            resampled_mask = np.empty(target_shape, dtype=np.float32)
+                                            reproject(
+                                                source=burned_mask,
+                                                destination=resampled_mask,
+                                                src_transform=src_transform,
+                                                src_crs=src_crs,
+                                                dst_transform=target_transform,
+                                                dst_crs=target_crs,
+                                                resampling=Resampling.nearest
+                                            )
+                                            burned_mask = resampled_mask
+                                        else:
+                                            st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
+                                            zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
+                                            burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
 
-                # Calculate spatially varying parameters
-                area_m2 = area_val * 10000.0
-                total_rain_m = (rainfall_val / 1000.0) * duration_val
-                if burned_mask is not None:
-                    burned_fraction = np.mean(burned_mask)
-                    unburned_fraction = 1 - burned_fraction
-                    burned_runoff_coefficient = min(runoff_val * (1 + burn_factor_val), 1.0)
-                    effective_runoff = runoff_val * unburned_fraction + burned_runoff_coefficient * burned_fraction
-                    V_runoff_unburned = total_rain_m * area_m2 * unburned_fraction * runoff_val
-                    V_runoff_burned = total_rain_m * area_m2 * burned_fraction * burned_runoff_coefficient
-                else:
-                    burned_fraction = 0
-                    unburned_fraction = 1
-                    effective_runoff = runoff_val
-                    V_runoff_unburned = total_rain_m * area_m2 * runoff_val
-                    V_runoff_burned = 0
+                        except Exception as e:
+                            st.error(f"Error processing burned area TIFF: {e}")
+                            burned_mask = None
 
-                # Flow simulation with effective runoff
-                V_runoff = total_rain_m * area_m2 * effective_runoff
-                Q_peak = V_runoff / duration_val
-                t = np.linspace(0, sim_hours_val, int(sim_hours_val * 60))
-                Q = np.zeros_like(t)
-                for i, time in enumerate(t):
-                    if time <= duration_val:
-                        Q[i] = Q_peak * (time / duration_val)
+                    # Calculate spatially varying parameters
+                    area_m2 = area_val * 10000.0
+                    total_rain_m = (rainfall_val / 1000.0) * duration_val
+                    if burned_mask is not None:
+                        burned_fraction = np.mean(burned_mask)
+                        unburned_fraction = 1 - burned_fraction
+                        burned_runoff_coefficient = min(runoff_val * (1 + burn_factor_val), 1.0)
+                        effective_runoff = runoff_val * unburned_fraction + burned_runoff_coefficient * burned_fraction
+                        V_runoff_unburned = total_rain_m * area_m2 * unburned_fraction * runoff_val
+                        V_runoff_burned = total_rain_m * area_m2 * burned_fraction * burned_runoff_coefficient
                     else:
-                        Q[i] = Q_peak * np.exp(-recession_val * (time - duration_val))
+                        burned_fraction = 0
+                        unburned_fraction = 1
+                        effective_runoff = runoff_val
+                        V_runoff_unburned = total_rain_m * area_m2 * runoff_val
+                        V_runoff_burned = 0
 
-                # Separate hydrographs
-                if V_runoff > 0:
-                    Q_unburned = (V_runoff_unburned / V_runoff) * Q
-                    Q_burned = (V_runoff_burned / V_runoff) * Q if burned_mask is not None else np.zeros_like(t)
-                else:
-                    Q_unburned = np.zeros_like(t)
-                    Q_burned = np.zeros_like(t)
+                    # Flow simulation with effective runoff
+                    V_runoff = total_rain_m * area_m2 * effective_runoff
+                    Q_peak = V_runoff / duration_val
+                    t = np.linspace(0, sim_hours_val, int(sim_hours_val * 60))
+                    Q = np.zeros_like(t)
+                    for i, time in enumerate(t):
+                        if time <= duration_val:
+                            Q[i] = Q_peak * (time / duration_val)
+                        else:
+                            Q[i] = Q_peak * np.exp(-recession_val * (time - duration_val))
 
-                # Retention time
-                retention_time = storage_val / (V_runoff / duration_val) if V_runoff > 0 else None
+                    # Separate hydrographs
+                    if V_runoff > 0:
+                        Q_unburned = (V_runoff_unburned / V_runoff) * Q
+                        Q_burned = (V_runoff_burned / V_runoff) * Q if burned_mask is not None else np.zeros_like(t)
+                    else:
+                        Q_unburned = np.zeros_like(t)
+                        Q_burned = np.zeros_like(t)
 
-                # Nutrient leaching
-                nutrient_load = nutrient_val * (1 - retention_val) * erosion_val * area_val
+                    # Retention time
+                    retention_time = storage_val / (V_runoff / duration_val) if V_runoff > 0 else None
 
-                # Additional terrain derivatives
-                flow_acc = np.ones_like(grid_z)  # Placeholder
-                twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
-                curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
+                    # Nutrient leaching
+                    nutrient_load = nutrient_val * (1 - retention_val) * erosion_val * area_val
 
-                # Store processed data in session state
-                st.session_state.processed_data = {
-                    'grid_z': grid_z,
-                    'slope': slope,
-                    'aspect': aspect,
-                    'burned_mask': burned_mask,
-                    'flow_acc': flow_acc,
-                    'twi': twi,
-                    'curvature': curvature,
-                    'Q': Q,
-                    'Q_unburned': Q_unburned,
-                    'Q_burned': Q_burned,
-                    'retention_time': retention_time,
-                    'nutrient_load': nutrient_load,
-                    'V_runoff_unburned': V_runoff_unburned,
-                    'V_runoff_burned': V_runoff_burned,
-                    'V_runoff': V_runoff,
-                    'grid_x': grid_x,
-                    'grid_y': grid_y,
-                    'dz_dx': dz_dx,
-                    'dz_dy': dz_dy
-                }
-        except Exception as e:
-            st.error(f"Error processing data: {e}")
-            st.session_state.processed_data = None
+                    # Additional terrain derivatives
+                    flow_acc = np.ones_like(grid_z)  # Placeholder
+                    twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
+                    curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
-    # If data is processed, retrieve parameters for display
+                    # Store processed data in session state
+                    st.session_state.processed_data = {
+                        'grid_z': grid_z,
+                        'slope': slope,
+                        'aspect': aspect,
+                        'burned_mask': burned_mask,
+                        'flow_acc': flow_acc,
+                        'twi': twi,
+                        'curvature': curvature,
+                        'Q': Q,
+                        'Q_unburned': Q_unburned,
+                        'Q_burned': Q_burned,
+                        'retention_time': retention_time,
+                        'nutrient_load': nutrient_load,
+                        'V_runoff_unburned': V_runoff_unburned,
+                        'V_runoff_burned': V_runoff_burned,
+                        'V_runoff': V_runoff,
+                        'grid_x': grid_x,
+                        'grid_y': grid_y,
+                        'dz_dx': dz_dx,
+                        'dz_dy': dz_dy
+                    }
+                    st.write("Analysis complete!")
+                except Exception as e:
+                    st.error(f"Error during analysis: {e}")
+                    st.session_state.processed_data = None
+
+    # If data is processed, display results
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        # Retrieve parameters from session state for display logic
-        scale_val = st.session_state.get('scale', 1.0)
-        offset_val = st.session_state.get('offset', 0.0)
-        dem_min_val = st.session_state.get('dem_min', 0.0)
-        dem_max_val = st.session_state.get('dem_max', 500.0)
-        grid_res_val = st.session_state.get('grid_res', 500)
-        rainfall_val = st.session_state.get('rainfall', 30.0)
-        duration_val = st.session_state.get('duration', 2.0)
-        area_val = st.session_state.get('area', 10.0)
-        runoff_val = st.session_state.get('runoff', 0.5)
-        recession_val = st.session_state.get('recession', 0.5)
-        sim_hours_val = st.session_state.get('sim_hours', 6.0)
-        storage_val = st.session_state.get('storage', 5000.0)
-        burn_factor_val = st.session_state.get('burn_factor', 1.0)
-        burn_threshold_val = st.session_state.get('burn_threshold', 200)
-        band_to_threshold = st.session_state.get('band_threshold', "Red")
-        nutrient_val = st.session_state.get('nutrient', 50.0)
-        retention_val = st.session_state.get('retention', 0.7)
-        erosion_val = st.session_state.get('erosion', 0.3)
-        gif_frames_val = st.session_state.get('gif_frames', 10)
-        gif_fps_val = st.session_state.get('gif_fps', 2)
-
         grid_z = st.session_state.processed_data['grid_z']
         slope = st.session_state.processed_data['slope']
         aspect = st.session_state.processed_data['aspect']
@@ -458,7 +441,6 @@ with tabs[0]:
         ax.set_ylabel("Flow Rate (m³/hr)")
         ax.legend()
         st.pyplot(fig)
-
     else:
         st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
