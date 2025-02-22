@@ -270,15 +270,30 @@ if uploaded_stl and run_button:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
                 tmp_tif.write(uploaded_burned.read())
                 with rasterio.open(tmp_tif.name) as src:
-                    # Ensure the TIFF has at least 3 bands (RGB)
                     if src.count < 3:
                         st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                     else:
                         # Read the red channel
                         red = src.read(1)
-                        # Create a binary mask where red values above threshold indicate burned areas
                         burned_mask = (red > burn_threshold_val).astype(np.float32)
                         burned_mask[burned_mask > 0] = 1
+                        # If the burned mask shape doesn't match the DEM, reproject it
+                        if burned_mask.shape != grid_z.shape:
+                            st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
+                            resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
+                            reproject(
+                                source=burned_mask,
+                                destination=resampled_mask,
+                                src_transform=src.transform,
+                                src_crs=src.crs if src.crs is not None else "EPSG:4326",
+                                dst_transform=from_origin(left_bound, top_bound, dx, dy),
+                                dst_crs="EPSG:4326",
+                                resampling=Resampling.nearest
+                            )
+                            burned_mask = resampled_mask
+                            st.write(f"Burned mask resampled to {burned_mask.shape}")
+                        # Flip vertically to correct orientation (since the TIFF origin is top-left)
+                        burned_mask = np.flipud(burned_mask)
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
             burned_mask = None
@@ -485,7 +500,6 @@ if uploaded_stl and run_button:
         st.header("3D STL Viewer")
         if stl_bytes is not None:
             try:
-                # Write stl_bytes to a temporary file for 3D viewing
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_3d:
                     tmp_3d.write(stl_bytes)
                     stl_path = tmp_3d.name
