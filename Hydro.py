@@ -147,54 +147,25 @@ left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.04
 # -----------------------------------------------------------------------------
 with tabs[0]:
     st.header("DEM & Flow Simulation")
-    st.markdown("### Adjust the following parameters to customize your DEM and flow simulation:")
-    
     with st.expander("Elevation Adjustments", expanded=True):
-        st.markdown("**Scale Factor**: Multiplies elevation values to adjust vertical exaggeration (0.1–5.0). Higher values increase elevation height, affecting slope and flow patterns.")
         scale = st.slider("Scale Factor", 0.1, 5.0, 1.0, 0.1, key="scale")
-        
-        st.markdown("**Offset (m)**: Adds or subtracts a constant elevation (m) to shift the entire DEM. Positive values raise, negative lower the terrain, impacting flow direction.")
         offset = st.slider("Offset (m)", -100.0, 100.0, 0.0, 1.0, key="offset")
-        
-        st.markdown("**Min Elevation (m)**: Sets the minimum elevation for clipping (0–500 m). Use to focus on specific elevation ranges, affecting flow accumulation.")
         dem_min = st.number_input("Min Elevation (m)", value=0.0, step=1.0, key="dem_min")
-        
-        st.markdown("**Max Elevation (m)**: Sets the maximum elevation for clipping (0–500 m). Adjust to limit elevation range, influencing slope and water flow.")
         dem_max = st.number_input("Max Elevation (m)", value=500.0, step=1.0, key="dem_max")
-        
-        st.markdown("**Grid Resolution**: Sets the number of grid cells (100–1000) for DEM interpolation. Higher resolution increases detail but slows computation; adjust for balance.")
         grid_res = st.number_input("Grid Resolution", 100, 1000, 500, 50, key="grid_res")
 
-    with st.expander("Flow & Retention", expanded=True):
-        st.markdown("**Rainfall (mm/hr)**: Sets rainfall intensity (1–100 mm/hr). Higher values increase runoff and flow, affecting hydrographs and retention.")
+    with st.expander("Flow & Retention"):
         rainfall = st.number_input("Rainfall (mm/hr)", value=30.0, step=1.0, key="rainfall")
-        
-        st.markdown("**Duration (hr)**: Sets storm duration (0.1–24 hr). Longer durations increase total runoff volume, impacting peak flow and retention time.")
         duration = st.number_input("Duration (hr)", value=2.0, step=0.1, key="duration")
-        
-        st.markdown("**Area (ha)**: Sets the watershed area (0.1–100 ha). Larger areas increase total runoff, affecting flow volume and peak discharge.")
         area = st.number_input("Area (ha)", value=10.0, step=0.1, key="area")
-        
-        st.markdown("**Runoff Coefficient**: Fraction of rainfall becoming runoff (0.0–1.0). Higher values increase surface runoff, reducing infiltration; adjust to match land cover.")
         runoff = st.slider("Runoff Coefficient", 0.0, 1.0, 0.5, 0.05, key="runoff")
-        
-        st.markdown("**Recession Rate (1/hr)**: Controls how quickly flow decreases after rain (0.1–2.0). Higher values mean faster recession, affecting hydrograph shape.")
         recession = st.number_input("Recession Rate (1/hr)", value=0.5, step=0.1, key="recession")
-        
-        st.markdown("**Simulation Duration (hr)**: Sets the total simulation time (0.5–24 hr). Longer durations show longer hydrograph tails; adjust to capture full flow response.")
         sim_hours = st.number_input("Simulation Duration (hr)", value=6.0, step=0.5, key="sim_hours")
-        
-        st.markdown("**Storage Volume (m³)**: Sets water storage capacity (100–10000 m³). Higher volumes increase retention time, reducing peak flows; adjust for reservoirs or ponds.")
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
 
-    with st.expander("Burned Area Effects", expanded=True):
-        st.markdown("**Runoff Increase Factor**: Multiplies runoff in burned areas (0.0–2.0). Higher values increase runoff due to reduced infiltration post-fire; adjust to reflect burn severity.")
+    with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        
-        st.markdown("**Burned Area Threshold**: Sets the pixel value threshold (0–255) for detecting burned areas in the selected band. Lower values detect more burned areas; adjust if maps lack variation.")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 200, 1, key="burn_threshold")
-        
-        st.markdown("**Band for Burned Area Threshold**: Selects the color band (Red, Green, Blue) for thresholding burned areas. Choose based on TIFF data; Red often highlights burned areas, but Green/Blue may work better for specific images.")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 200, 1, key="burn_threshold")  # Lowered threshold for testing
         band_to_threshold = st.selectbox("Band for Burned Area Threshold", ["Red", "Green", "Blue"], key="band_threshold")
 
 # -----------------------------------------------------------------------------
@@ -202,16 +173,9 @@ with tabs[0]:
 # -----------------------------------------------------------------------------
 with tabs[6]:
     st.header("Nutrient Leaching")
-    st.markdown("### Adjust parameters to estimate nutrient leaching from soil:")
-    
     with st.expander("Nutrient Leaching Parameters", expanded=True):
-        st.markdown("**Soil Nutrient (kg/ha)**: Initial nutrient content in soil (1–100 kg/ha). Higher values increase potential leaching; adjust based on soil tests.")
         nutrient = st.number_input("Soil Nutrient (kg/ha)", value=50.0, step=1.0, key="nutrient")
-        
-        st.markdown("**Vegetation Retention**: Fraction of nutrients retained by vegetation (0.0–1.0). Higher values reduce leaching; adjust for vegetation cover post-fire.")
         retention = st.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05, key="retention")
-        
-        st.markdown("**Soil Erosion Factor**: Fraction of soil loss contributing to nutrient leaching (0.0–1.0). Higher values increase leaching; adjust based on erosion rates.")
         erosion = st.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05, key="erosion")
 
 # -----------------------------------------------------------------------------
@@ -219,13 +183,8 @@ with tabs[6]:
 # -----------------------------------------------------------------------------
 with tabs[10]:
     st.header("Scenario GIFs")
-    st.markdown("### Configure GIF generation for visualizing scenarios over time:")
-    
     with st.expander("GIF Settings", expanded=True):
-        st.markdown("**GIF Frames**: Number of frames in the animation (5–50). More frames increase detail but file size; adjust for animation quality.")
         gif_frames = st.number_input("GIF Frames", value=10, step=1, key="gif_frames")
-        
-        st.markdown("**GIF FPS**: Frames per second for the animation (1–10). Higher values speed up playback; adjust for smooth viewing.")
         gif_fps = st.number_input("GIF FPS", value=2, step=1, key="gif_fps")
 
 # -----------------------------------------------------------------------------
@@ -405,23 +364,15 @@ if uploaded_stl and run_button:
     # DEM & Flow Simulation tab
     with tabs[0]:
         st.header("DEM & Flow Simulation")
-        st.markdown("### This tab displays the Digital Elevation Model (DEM) and flow simulation results.")
-        st.markdown("**Instructions**: Adjust elevation and flow parameters to see how they impact the DEM visualization and hydrograph. If maps are uniform, check the STL file for terrain variability or adjust the scale factor and offset.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the DEM for context. Useful when analyzing fire impacts on hydrology.")
+        with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the DEM more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, grid_z, 'terrain',
             vmin=dem_min_val, vmax=dem_max_val,
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**DEM & Flow Visualization**: Shows the terrain elevation (m) with flow direction arrows (blue). Steeper slopes and burned areas affect flow paths; adjust parameters to see changes.")
         step = max(1, grid_res_val // 20)
         ax.quiver(
             grid_x[::step, ::step], grid_y[::step, ::step],
@@ -432,7 +383,6 @@ if uploaded_stl and run_button:
 
         # Hydrograph plot
         st.subheader("Hydrograph")
-        st.markdown("**Hydrograph**: Plots total flow (blue), unburned area flow (green), and burned area flow (red) over time (hr). Higher rainfall or runoff coefficients increase peak flows; adjust parameters to see impacts.")
         fig, ax = plt.subplots()
         ax.plot(t, Q, label="Total Flow", color='blue')
         if burned_mask is not None:
@@ -446,9 +396,6 @@ if uploaded_stl and run_button:
     # Burned Areas tab
     with tabs[1]:
         st.header("Burned Areas")
-        st.markdown("### This tab shows the distribution of burned areas from the uploaded TIFF.")
-        st.markdown("**Instructions**: Upload a georeferenced RGB TIFF to visualize burned areas. If no data appears, ensure the TIFF is valid, has 3 bands, and adjust the 'Burned Area Threshold' in the 'DEM & Flow Simulation' tab to detect burned regions.")
-        
         if burned_mask is not None:
             fig, ax = plt.subplots()
             cmap = ListedColormap(['red', 'black'])
@@ -456,14 +403,13 @@ if uploaded_stl and run_button:
                 np.flipud(burned_mask), cmap=cmap, origin='upper',  # Flip to correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
-            st.markdown("**Burned Areas Map**: Red areas indicate burned regions (value=1), black areas are unburned (value=0). Adjust the threshold to capture more or fewer burned areas if the map is uniform.")
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
             aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Unburned', 'Burned'])  # Updated for clarity
+            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
@@ -471,165 +417,100 @@ if uploaded_stl and run_button:
     # Slope Map tab
     with tabs[2]:
         st.header("Slope Map")
-        st.markdown("### This tab displays the slope of the terrain derived from the DEM.")
-        st.markdown("**Instructions**: Steeper slopes increase runoff and erosion. If the map lacks variation, check the STL file for terrain variability or adjust the scale factor and offset in 'DEM & Flow Simulation'.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Slope Min**: Sets the minimum slope value (0–90 degrees) for visualization. Lower values focus on flatter areas; increase to highlight steeper slopes.")
+        with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
-            
-            st.markdown("**Slope Max**: Sets the maximum slope value (0–90 degrees). Higher values show the full range of slopes; adjust to focus on specific ranges.")
             slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
-            
-            st.markdown("**Colormap**: Selects the color scheme (viridis, plasma, inferno) for the slope map. Choose based on preference for visualizing slope variation.")
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
-            
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the slope map for context. Useful for identifying erosion risks in burned regions.")
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the slope map more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, slope, slope_cmap, 
             vmin=slope_vmin, vmax=slope_vmax,
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**Slope Map**: Shows terrain slope in degrees (0–90°), with steeper areas indicating higher runoff and erosion potential. Use sliders to adjust the range and colormap for better visualization.")
         st.pyplot(fig)
 
     # Aspect Map tab
     with tabs[3]:
         st.header("Aspect Map")
-        st.markdown("### This tab displays the aspect (direction) of the terrain derived from the DEM.")
-        st.markdown("**Instructions**: Aspect indicates flow direction (0–360°). If the map lacks variation, check the STL file or adjust elevation parameters in 'DEM & Flow Simulation'.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Aspect Min**: Sets the minimum aspect value (0–360 degrees) for visualization. Adjust to focus on specific flow directions.")
+        with st.expander("Visualization Options"):
             aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
-            
-            st.markdown("**Aspect Max**: Sets the maximum aspect value (0–360 degrees). Adjust to limit the range, highlighting specific flow directions.")
             aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
-            
-            st.markdown("**Colormap**: Selects the color scheme (twilight, hsv) for the aspect map. Choose based on preference for visualizing flow direction.")
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
-            
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the aspect map for context. Useful for identifying flow paths in burned regions.")
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make the aspect map more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, aspect, aspect_cmap, 
             vmin=aspect_vmin, vmax=aspect_vmax,
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**Aspect Map**: Shows terrain aspect in degrees (0–360°), indicating flow direction. Use sliders to adjust range and colormap for better visualization.")
         st.pyplot(fig)
 
     # Retention Time tab
     with tabs[4]:
-        st.header("Retention Time")
-        st.markdown("### This tab estimates how long water is retained in the watershed.")
-        st.markdown("**Instructions**: Retention time depends on storage volume, runoff, and rainfall. If 'No effective runoff,' increase rainfall, runoff coefficient, or area in 'DEM & Flow Simulation'.")
-        
+        st.subheader("Retention Time")
         if retention_time is not None:
             st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
-            st.markdown("**Retention Time**: Indicates how long water is held before draining, based on storage volume and runoff. Higher storage or lower runoff increases retention; adjust parameters to test scenarios.")
         else:
             st.write("No effective runoff → Retention time not applicable.")
 
     # GeoTIFF Export tab
     with tabs[5]:
-        st.header("GeoTIFF Export")
-        st.markdown("### This tab is for exporting analysis results as GeoTIFF files.")
-        st.markdown("**Instructions**: Export functionality is not yet implemented. Future updates will allow saving maps like infiltration, erosion, and runoff potential as georeferenced TIFFs for GIS use.")
+        st.subheader("GeoTIFF Export")
+        st.write("Export functionality to be implemented (placeholder).")
 
     # Nutrient Leaching tab
     with tabs[6]:
-        st.header("Nutrient Leaching")
-        st.markdown("### This tab estimates nutrient leaching from soil due to erosion and runoff.")
-        st.markdown("**Instructions**: Adjust soil nutrient, retention, and erosion factors. If the load seems too low or high, increase soil nutrient or erosion factor, or decrease retention to reflect post-fire conditions.")
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
     # Flow Accumulation tab
     with tabs[7]:
         st.header("Flow Accumulation")
-        st.markdown("### This tab shows accumulated flow across the terrain.")
-        st.markdown("**Instructions**: Flow accumulation indicates water volume downstream. If the map is uniform, ensure the DEM has varied slopes and adjust grid resolution for detail.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the flow accumulation map. Useful for identifying flow impacts in burned regions.")
+        with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make flow accumulation more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, flow_acc, 'Blues',
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**Flow Accumulation Map**: Shows water accumulation (arbitrary units). Higher values indicate areas receiving more flow; adjust DEM parameters for variability.")
         st.pyplot(fig)
 
     # TWI tab
     with tabs[8]:
         st.header("Topographic Wetness Index")
-        st.markdown("### This tab shows areas prone to saturation based on terrain.")
-        st.markdown("**Instructions**: TWI indicates potential wetness. If uniform, check slope variability in the STL or adjust grid resolution.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the TWI map. Useful for identifying wetness changes in burned regions.")
+        with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make TWI more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, twi, 'RdYlBu',
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**Topographic Wetness Index Map**: Shows wetness potential, with higher values (yellow-red) indicating wetter areas. Adjust slope and flow parameters for variability.")
         st.pyplot(fig)
 
     # Curvature tab
     with tabs[9]:
         st.header("Curvature Analysis")
-        st.markdown("### This tab analyzes terrain curvature from the DEM.")
-        st.markdown("**Instructions**: Curvature indicates terrain convexity/concavity, affecting flow. If uniform, check the STL for terrain variability or adjust resolution.")
-        
-        with st.expander("Visualization Options", expanded=True):
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the curvature map. Useful for identifying curvature impacts in burned regions.")
+        with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
-            
-            st.markdown("**Burned Areas Transparency**: Adjust transparency (0.0–1.0) of the burned overlay. Lower values make curvature more visible; higher values emphasize burned areas.")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
-        
         fig, ax = plt.subplots()
         plot_with_burned_overlay(
             ax, curvature, 'Spectral',
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
-        st.markdown("**Curvature Map**: Shows terrain curvature (positive=convex, negative=concave). Adjust DEM parameters to enhance variability.")
         st.pyplot(fig)
 
     # Scenario GIFs tab
     with tabs[10]:
-        st.header("Scenario GIFs")
-        st.markdown("### This tab will generate animated GIFs for scenario analysis (not implemented yet).")
-        st.markdown("**Instructions**: Upload files and adjust GIF settings. Future updates will enable dynamic visualization of hydrological changes over time.")
+        st.write("GIF generation to be implemented (placeholder).")
 
     # Burned-Area Hydro Impacts tab
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
-        st.markdown("### This tab analyzes how burned areas affect hydrology, combining DEM slope and burned areas.")
-        st.markdown("**Instructions**: Upload a burned-area TIFF and adjust parameters to see impacts on infiltration, erosion, runoff, and erosion risk. If maps are blank or uniform, check the TIFF for burned areas (adjust 'Burned Area Threshold'), ensure the STL has varied slopes, and tweak parameters like 'Runoff Increase Factor' or 'Erosion Multiplier' to enhance variability.")
-        
         st.markdown("""
         **How Burned Areas Affect Hydrogeology**  
         - **Reduced Infiltration** in burned patches → More surface runoff  
@@ -637,25 +518,17 @@ if uploaded_stl and run_button:
         - **Decreased Groundwater Recharge** (if infiltration is lower)  
         - **Nutrient & Ash Loading** in runoff → Potential water quality issues  
         """)
-        
         st.subheader("Advanced Burned-Area Parameters")
-        st.markdown("**Base Infiltration Rate (mm/hr)**: Sets baseline infiltration before burn effects (0–50 mm/hr). Higher values reduce runoff; adjust to match soil conditions.")
         base_infiltration = st.number_input(
             "Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0
         )
-        
-        st.markdown("**Infiltration Reduction in Burned Areas (fraction)**: Reduces infiltration in burned areas (0.0–1.0). Higher values increase runoff; adjust to reflect burn severity.")
         infiltration_reduction = st.slider(
             "Infiltration Reduction in Burned Areas (fraction)",
             0.0, 1.0, 0.5, 0.05
         )
-        
-        st.markdown("**Base Erosion Rate (tons/ha)**: Sets baseline erosion rate before burn effects (0.1–2.0 tons/ha). Higher values increase sediment loss; adjust for soil type.")
         base_erosion_rate = st.number_input(
             "Base Erosion Rate (tons/ha)", value=0.5, step=0.1
         )
-        
-        st.markdown("**Erosion Multiplier in Burned Areas**: Increases erosion in burned areas (1.0–5.0). Higher values reflect greater soil loss post-fire; adjust to match burn severity.")
         erosion_multiplier_burned = st.slider(
             "Erosion Multiplier in Burned Areas",
             1.0, 5.0, 2.0, 0.1
@@ -704,7 +577,6 @@ if uploaded_stl and run_button:
 
             # Infiltration Map
             st.subheader("Infiltration Map (mm/hr)")
-            st.markdown("**Infiltration Map**: Shows infiltration rates (mm/hr) across the terrain, with lower values in burned areas (green). Adjust 'Base Infiltration Rate' and 'Infiltration Reduction' to see changes in runoff potential.")
             fig, ax = plt.subplots()
             im = ax.imshow(
                 np.flipud(infiltration_map), cmap='Greens', origin='upper',  # Flip for correct orientation
@@ -719,7 +591,6 @@ if uploaded_stl and run_button:
 
             # Erosion Map
             st.subheader("Erosion Map (tons/ha)")
-            st.markdown("**Erosion Map**: Shows erosion rates (tons/ha), with higher values in burned and steeper areas (red-orange). Adjust 'Base Erosion Rate' and 'Erosion Multiplier' to increase variability.")
             fig, ax = plt.subplots()
             im = ax.imshow(
                 np.flipud(erosion_map), cmap='OrRd', origin='upper',  # Flip for correct orientation
@@ -733,7 +604,6 @@ if uploaded_stl and run_button:
 
             # Runoff Potential Map
             st.subheader("Runoff Potential Map (Normalized)")
-            st.markdown("**Runoff Potential Map**: Shows normalized runoff potential (0–1, blue), combining slope and burned areas. Higher values (darker blue) indicate greater runoff likelihood in steeper, burned regions. If blank or uniform, adjust 'Runoff Coefficient,' 'Runoff Increase Factor,' 'Burned Area Threshold,' or check the STL for slope variability and TIFF for burned areas.")
             fig, ax = plt.subplots()
             im = ax.imshow(
                 np.flipud(runoff_potential), cmap='Blues', origin='upper',  # Flip for correct orientation
@@ -748,7 +618,6 @@ if uploaded_stl and run_button:
 
             # Erosion Risk Map
             st.subheader("Erosion Risk Map (tons/ha)")
-            st.markdown("**Erosion Risk Map**: Shows erosion risk (tons/ha, yellow-orange-red), combining slope and burned areas. Higher values (redder) indicate greater risk in steeper, burned regions. If uniform, adjust 'Base Erosion Rate,' 'Erosion Multiplier,' 'Burned Area Threshold,' or verify STL and TIFF data.")
             fig, ax = plt.subplots()
             im = ax.imshow(
                 np.flipud(erosion_risk), cmap='YlOrRd', origin='upper',  # Flip for correct orientation
@@ -761,22 +630,19 @@ if uploaded_stl and run_button:
             st.pyplot(fig)
 
             st.info("""
-            **Additional Tips for Users**:  
-            - If maps are blank or uniform, check the debug outputs below for variability in slope, burned mask, and combined effects.  
-            - Adjust the 'Burned Area Threshold' (lower values detect more burned areas) or switch bands (Red, Green, Blue) if burned areas aren’t detected.  
-            - Increase 'Runoff Increase Factor' or 'Erosion Multiplier' to amplify effects in burned areas.  
-            - Verify the STL file has varied terrain (slope) and the TIFF shows burned areas for spatial variation.  
+            **Interpretation**:  
+            - **Infiltration Map**: Lower values in burned areas indicate reduced infiltration, increasing runoff.  
+            - **Erosion Map**: Higher values in burned areas reflect increased soil loss due to less vegetation.  
+            - **Runoff Potential Map**: Combines slope and burned areas; higher values (darker blue) indicate greater runoff likelihood, reflecting steeper slopes and burned conditions.  
+            - **Erosion Risk Map**: Combines slope and burned areas; higher values (redder tones) indicate greater erosion risk, reflecting steeper slopes and burned conditions.  
             """)
         else:
             st.write(f"**Total Runoff:** {V_runoff:.2f} m³")
-            st.warning("No burned area detected or TIFF missing. Upload a valid burned-area TIFF and adjust the 'Burned Area Threshold' to detect burned regions.")
+            st.warning("No burned area detected or TIFF missing.")
 
     # Parameter Comparison Tab
     with tabs[12]:
         st.header("Parameter Comparison")
-        st.markdown("### This tab compares hydrological parameters between burned and unburned areas.")
-        st.markdown("**Instructions**: If no comparison appears, ensure a burned-area TIFF is uploaded and shows variation. Adjust parameters in other tabs to enhance differences.")
-        
         if burned_mask is not None:
             params = {
                 "Elevation (m)": grid_z,
@@ -802,12 +668,11 @@ if uploaded_stl and run_button:
             if comparison_data:
                 df = pd.DataFrame(comparison_data).T
                 st.write("**Statistical Comparison of Parameters**")
-                st.markdown("**Parameter Comparison Table**: Shows means, medians, and standard deviations for burned vs. unburned areas. Higher differences indicate stronger fire impacts; adjust parameters to enhance variability.")
                 st.write(df)
             else:
-                st.write("No data available for comparison. Ensure burned areas are detected in the TIFF.")
+                st.write("No data available for comparison.")
         else:
-            st.write("No burned area data available for comparison. Upload a valid burned-area TIFF.")
+            st.write("No burned area data available for comparison.")
 
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
