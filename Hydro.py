@@ -210,6 +210,11 @@ if uploaded_stl and run_button:
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
 
+    # Check for NaN values in grid_z
+    if np.any(np.isnan(grid_z)):
+        st.warning("DEM contains NaN values; replacing with minimum elevation.")
+        grid_z = np.nan_to_num(grid_z, nan=dem_min)
+
     # Compute derivatives
     dx = (right_bound - left_bound) / (grid_res - 1)
     dy = (top_bound - bottom_bound) / (grid_res - 1)
@@ -279,10 +284,11 @@ if uploaded_stl and run_button:
         transform = from_origin(left_bound, top_bound, dx, -dy)
         with rasterio.open(
             tmp_dem.name, 'w', driver='GTiff', height=grid_res, width=grid_res,
-            count=1, dtype=grid_z.dtype, crs=CRS.from_epsg(4326), transform=transform
+            count=1, dtype=grid_z.dtype, crs=CRS.from_epsg(4326), transform=transform,
+            nodata=-9999.0  # Explicitly set nodata as a float compatible with float64
         ) as dst:
             dst.write(np.flipud(grid_z), 1)
-        grid = pysheds.Grid.from_raster(tmp_dem.name)
+        grid = pysheds.Grid.from_raster(tmp_dem.name, nodata=-9999.0)
         grid.fill_depressions(data='raster', out_name='flooded_dem')
         grid.resolve_flats(data='flooded_dem', out_name='inflated_dem')
         grid.flowdir(data='inflated_dem', out_name='fdir')
