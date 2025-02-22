@@ -221,7 +221,7 @@ with tabs[0]:
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
         
         st.markdown("**Burned Area Threshold**: Sets the pixel value threshold (0–255) for detecting burned areas in the selected band. Lower values detect more burned areas; adjust if maps lack variation.")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 200, 1, key="burn_threshold")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")
         
         st.markdown("**Band for Burned Area Threshold**: Selects the color band (Red, Green, Blue) for thresholding burned areas. Choose based on TIFF data; Red often highlights burned areas, but Green/Blue may work better for specific images.")
         band_to_threshold = st.selectbox("Band for Burned Area Threshold", ["Red", "Green", "Blue"], key="band_threshold")
