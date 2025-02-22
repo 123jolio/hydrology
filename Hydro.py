@@ -14,6 +14,7 @@ from PIL import Image
 from scipy.ndimage import convolve
 from matplotlib.colors import ListedColormap
 import pysheds.grid as pysheds
+from rasterio.crs import CRS
 
 # Set page config for a wide layout and dark theme
 st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
@@ -204,6 +205,7 @@ if uploaded_stl and run_button:
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res)
+    yi = np.linspace(bottom_bound, top_bound, grid_res)  # Fixed typo below
     yi = np.linspace(bottom_bound, top_bound, grid_res)  # Note: custom_bound seems to be a typo; using bottom_bound
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
@@ -249,16 +251,19 @@ if uploaded_stl and run_button:
                     else:
                         red = src.read(1)
                         burned_mask = (red > burn_threshold).astype(np.float32)
-                        # Define destination transform for DEM grid
+                        # Define CRS (assume WGS84 if not specified)
+                        src_crs = src.crs if src.crs else CRS.from_epsg(4326)
+                        # Define destination transform and CRS for DEM grid
                         transform = from_origin(left_bound - dx/2, top_bound + dy/2, dx, -dy)
+                        dst_crs = CRS.from_epsg(4326)  # WGS84
                         burned_mask_resampled = np.zeros((grid_res, grid_res), dtype=np.float32)
                         reproject(
                             source=burned_mask,
                             destination=burned_mask_resampled,
                             src_transform=src.transform,
-                            src_crs=src.crs,
+                            src_crs=src_crs,
                             dst_transform=transform,
-                            dst_crs=src.crs,
+                            dst_crs=dst_crs,
                             resampling=Resampling.nearest
                         )
         except Exception as e:
@@ -273,12 +278,17 @@ if uploaded_stl and run_button:
         st.write("No burned area data uploaded; using uniform runoff coefficient.")
 
     # Flow accumulation using pysheds
-    grid = pysheds.Grid.from_array(np.flipud(grid_z), 
-                                   bbox=(left_bound, bottom_bound, right_bound, top_bound))
-    flooded_dem = grid.fill_depressions()
-    inflated_dem = grid.resolve_flats(flooded_dem)
-    fdir = grid.flowdir(inflated_dem)
-    flow_acc = grid.accumulation(fdir)
+    grid = pysheds.Grid()
+    grid.add_gridded_data(data=np.flipud(grid_z), 
+                          data_name='dem',
+                          affine=from_origin(left_bound, top_bound, dx, -dy),
+                          shape=(grid_res, grid_res),
+                          crs=CRS.from_epsg(4326))
+    grid.fill_depressions(data='dem', out_name='flooded_dem')
+    grid.resolve_flats(data='flooded_dem', out_name='inflated_dem')
+    grid.flowdir(data='inflated_dem', out_name='fdir')
+    grid.accumulation(data='fdir', out_name='flow_acc')
+    flow_acc = grid.flow_acc
     flow_acc_to_plot = np.flipud(flow_acc)  # Flip back for plotting consistency
 
     # Flood risk map
