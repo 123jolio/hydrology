@@ -14,25 +14,59 @@ from PIL import Image
 from scipy.ndimage import convolve
 from matplotlib.colors import ListedColormap
 
-# [Previous imports and configurations remain unchanged]
-
-# Set page config
+# Set page configuration
 st.set_page_config(
     page_title="Hydrogeology & DEM Analysis",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# [CSS, header, ribbon toolbar, and tab definitions remain unchanged]
+# Define tabs (example tab list; adjust as needed)
+tab_names = [
+    "DEM & Flow Simulation", "Slope & Aspect", "Flow Accumulation",
+    "Retention Time", "Nutrient Leaching", "Burned Area Detection",
+    "Terrain Derivatives", "Hydro Simulation", "STL Visualization",
+    "GeoTIFF Export", "Animation", "Burned-Area Hydro Impacts"
+]
+tabs = st.tabs(tab_names)
 
-# Georeference bounding box (EPSG:4326)
+# Georeference bounding box (EPSG:4326) - Example coordinates
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
-# [Parameter inputs in "DEM & Flow Simulation" and other tabs remain unchanged]
+# DEM & Flow Simulation Tab (unchanged example)
+with tabs[0]:
+    st.header("DEM & Flow Simulation")
+    uploaded_stl = st.file_uploader("Upload STL File", type=["stl"])
+    run_button = st.button("Run Analysis")
+    scale_val = st.slider("Scale Factor", 0.1, 10.0, 1.0)
+    offset_val = st.slider("Offset (m)", -100.0, 100.0, 0.0)
+    dem_min_val = st.slider("Min DEM Height (m)", -1000.0, 0.0, 0.0)
+    dem_max_val = st.slider("Max DEM Height (m)", 0.0, 5000.0, 1000.0)
+    grid_res_val = st.slider("Grid Resolution", 50, 500, 100)
+    rainfall_val = st.slider("Rainfall (mm)", 0.0, 200.0, 50.0)
+    duration_val = st.slider("Storm Duration (hr)", 0.1, 24.0, 1.0)
+    area_val = st.slider("Drainage Area (ha)", 1.0, 1000.0, 100.0)
+    runoff_val = st.slider("Runoff Coefficient", 0.0, 1.0, 0.5)
+    recession_val = st.slider("Recession Constant", 0.0, 1.0, 0.1)
+    sim_hours_val = st.slider("Simulation Hours", 1, 48, 24)
+    storage_val = st.slider("Storage Capacity (mm)", 0.0, 100.0, 10.0)
+    burn_factor_val = st.slider("Burn Factor", 1.0, 3.0, 1.5)
+    burn_threshold_val = st.slider("Burn Threshold", 0.0, 1.0, 0.3)
+    nutrient_val = st.slider("Nutrient Load (kg/ha)", 0.0, 10.0, 1.0)
+    retention_val = st.slider("Retention Factor", 0.0, 1.0, 0.5)
+    erosion_val = st.slider("Erosion Rate (tons/ha)", 0.0, 5.0, 0.5)
+    st.session_state.update({
+        'scale': scale_val, 'offset': offset_val, 'dem_min': dem_min_val,
+        'dem_max': dem_max_val, 'grid_res': grid_res_val, 'rainfall': rainfall_val,
+        'duration': duration_val, 'area': area_val, 'runoff': runoff_val,
+        'recession': recession_val, 'sim_hours': sim_hours_val, 'storage': storage_val,
+        'burn_factor': burn_factor_val, 'burn_threshold': burn_threshold_val,
+        'nutrient': nutrient_val, 'retention': retention_val, 'erosion': erosion_val
+    })
 
 # Processing Logic
 if uploaded_stl and run_button:
-    # Retrieve parameters
+    # Retrieve parameters from session state
     scale_val = st.session_state.scale
     offset_val = st.session_state.offset
     dem_min_val = st.session_state.dem_min
@@ -50,12 +84,8 @@ if uploaded_stl and run_button:
     nutrient_val = st.session_state.nutrient
     retention_val = st.session_state.retention
     erosion_val = st.session_state.erosion
-    gif_frames_val = st.session_state.gif_frames
-    gif_fps_val = st.session_state.gif_fps
 
-    # [STL loading, DEM interpolation, derivatives, flow simulation, etc., remain unchanged]
-
-    # Load STL and compute DEM (unchanged)
+    # Load STL and compute DEM
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
         tmp_stl.write(uploaded_stl.read())
         stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
@@ -69,13 +99,13 @@ if uploaded_stl and run_button:
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res_val)
-    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Note: Should be bottom_bound, assuming typo
+    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Should be bottom_bound
     grid_x, grid_y = np.meshgrid(xi, yi)
 
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min_val, dem_max_val)
 
-    # Derivatives (unchanged)
+    # Derivatives
     dx = (right_bound - left_bound) / (grid_res_val - 1)
     dy = (top_bound - bottom_bound) / (grid_res_val - 1)
     avg_lat = (top_bound + bottom_bound) / 2.0
@@ -86,9 +116,11 @@ if uploaded_stl and run_button:
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-    # [Flow simulation, retention time, nutrient leaching, burned area mask, terrain derivatives, and plotting helper remain unchanged]
+    # Example burned mask (replace with actual TIFF loading if available)
+    burned_mask = np.random.rand(grid_res_val, grid_res_val) > (1 - burn_threshold_val)
+    burned_mask = burned_mask.astype(int)
 
-    # Burned-Area Hydro Impacts Tab (Enhanced)
+    # *** Burned-Area Hydro Impacts Tab (Enhanced) ***
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
 
@@ -100,7 +132,7 @@ if uploaded_stl and run_button:
         - **Nutrient & Ash Loading**: Enhanced runoff carries more nutrients/ash, impacting water quality.  
         """)
 
-        # User inputs
+        # User inputs for burned-area parameters
         st.subheader("Advanced Burned-Area Parameters")
         base_infiltration = st.number_input(
             "Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0
@@ -118,15 +150,10 @@ if uploaded_stl and run_button:
         )
 
         if burned_mask is not None:
-            # Infiltration map (existing)
+            # Existing infiltration map
             infiltration_map = np.full_like(grid_z, base_infiltration)
             infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
             infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
-
-            # Existing erosion map (to be replaced)
-            erosion_map = np.full_like(grid_z, base_erosion_rate)
-            erosion_map[burned_mask == 1] *= erosion_multiplier_burned
-            total_erosion_old = erosion_map.sum()  # Incorrect units, will correct below
 
             # Adjusted runoff coefficient (existing)
             infiltration_ratio = (infiltration_map.mean() / base_infiltration)
@@ -135,64 +162,33 @@ if uploaded_stl and run_button:
 
             # Nutrient load increase (existing)
             burned_fraction = burned_mask.mean()
+            nutrient_load = nutrient_val * area_val  # Example calculation
             nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)
 
-            # NEW: Runoff Depth Map
-            # Compute spatially varying runoff coefficient
-            C_map = np.minimum(
+            # NEW: Runoff Coefficient Map
+            st.subheader("Runoff Coefficient Map")
+            runoff_coeff_map = np.minimum(
                 runoff_val * (1 + (burn_factor_val - 1) * burned_mask), 1.0
             )
-            total_rainfall_depth = rainfall_val * duration_val
-            runoff_depth_map = C_map * total_rainfall_depth
-
-            # Calculate total runoff volume
-            cell_area_m2 = dx_meters * dy_meters
-            total_runoff_volume = np.sum(runoff_depth_map / 1000 * cell_area_m2)  # mm to m
-
-            # NEW: Erosion Risk Map
-            max_slope = np.max(slope)
-            erosion_risk_map = base_erosion_rate * (slope / max_slope) * \
-                              (1 + (erosion_multiplier_burned - 1) * burned_mask)
-            cell_area_ha = cell_area_m2 / 10000
-            total_erosion = np.sum(erosion_risk_map * cell_area_ha)
-
-            # Display summary statistics
-            st.write(f"**Infiltration Volume (mm * cell_area):** ~{infiltration_volume_total:.2f} mm-hr equivalent")
-            st.write(f"**Total Runoff Volume:** {total_runoff_volume:.2f} m³")
-            st.write(f"**Total Estimated Erosion:** {total_erosion:.2f} tons")
-            st.write(f"**Adjusted Runoff Coefficient (approx):** {new_runoff_coefficient:.2f}")
-            st.write(f"**Potential Nutrient Load Increase:** from {nutrient_load:.2f} to ~{nutrient_load_burned:.2f} kg")
-
-            # Visualize Infiltration Map (existing)
-            st.subheader("Infiltration Map (mm/hr)")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                infiltration_map, cmap='Greens', origin='lower',
-                extent=(left_bound, right_bound, bottom_bound, top_bound)
+                runoff_coeff_map, cmap='Blues', origin='lower',
+                extent=(left_bound, right_bound, bottom_bound, top_bound),
+                vmin=0, vmax=1
             )
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * \
                            (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
-            fig.colorbar(im, ax=ax, label="Infiltration Rate (mm/hr)")
+            fig.colorbar(im, ax=ax, label="Runoff Coefficient")
             st.pyplot(fig)
 
-            # Visualize Runoff Depth Map
-            st.subheader("Runoff Depth Map (mm)")
-            fig, ax = plt.subplots()
-            im = ax.imshow(
-                runoff_depth_map, cmap='Blues', origin='lower',
-                extent=(left_bound, right_bound, bottom_bound, top_bound)
-            )
-            ax.set_aspect(aspect_ratio)
-            ax.set_xlabel('Longitude (°E)')
-            ax.set_ylabel('Latitude (°N)')
-            fig.colorbar(im, ax=ax, label="Runoff Depth (mm)")
-            st.pyplot(fig)
-
-            # Visualize Erosion Risk Map
-            st.subheader("Erosion Risk Map (tons/ha)")
+            # NEW: Erosion Risk Map
+            st.subheader("Erosion Risk Map")
+            max_slope = np.max(slope)
+            erosion_risk_map = base_erosion_rate * (slope / max_slope) * \
+                              (1 + (erosion_multiplier_burned - 1) * burned_mask)
             fig, ax = plt.subplots()
             im = ax.imshow(
                 erosion_risk_map, cmap='OrRd', origin='lower',
@@ -204,13 +200,14 @@ if uploaded_stl and run_button:
             fig.colorbar(im, ax=ax, label="Erosion Risk (tons/ha)")
             st.pyplot(fig)
 
-            # Interpretation
-            st.info("""
-            **Interpretation**:  
-            - **Infiltration Map**: Lower rates in burned areas (red overlay) indicate reduced water absorption, leading to more runoff.  
-            - **Runoff Depth Map**: Higher values in burned regions show increased surface runoff due to lower infiltration.  
-            - **Erosion Risk Map**: Combines slope and burned area effects, highlighting areas prone to soil loss, especially where vegetation is absent.  
-            These maps illustrate how burned areas amplify runoff and erosion, impacting hydrology and downstream water quality.
+            # Interpretation text for the new maps
+            st.write("""
+            The **Runoff Coefficient Map** shows the spatial variation in runoff potential. 
+            Higher values (darker blue) indicate areas where a larger fraction of rainfall becomes surface runoff, 
+            particularly in burned regions due to reduced infiltration.
+
+            The **Erosion Risk Map** highlights areas susceptible to soil erosion. 
+            Darker red areas have higher risk, influenced by both steep slopes and burned land cover.
             """)
 
         else:
