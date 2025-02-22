@@ -11,7 +11,7 @@ from rasterio.warp import reproject, Resampling
 import imageio
 import os
 from PIL import Image
-from scipy.ndimage import convolve
+from scipy.ndimage import convolve, zoom
 from matplotlib.colors import ListedColormap
 import pandas as pd
 
@@ -277,7 +277,10 @@ if uploaded_stl and run_button:
                             )
                             burned_mask = resampled_mask
                         else:
-                            st.warning("TIFF has no CRS. Using raw mask without reprojection. Alignment with DEM may be inaccurate.")
+                            st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
+                            # Fallback: Resize mask to match DEM shape using scipy.ndimage.zoom
+                            zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
+                            burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
 
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
@@ -523,9 +526,12 @@ if uploaded_stl and run_button:
         )
 
         if burned_mask is not None:
-            # Check shape compatibility
+            # Ensure shape compatibility
             if burned_mask.shape != grid_z.shape:
-                st.warning(f"Burned mask shape {burned_mask.shape} does not match DEM shape {grid_z.shape}. Results may be inaccurate without reprojection.")
+                st.error(f"Burned mask shape {burned_mask.shape} does not match DEM shape {grid_z.shape}. Adjusting mask size.")
+                zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
+                burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
+
             infiltration_map = np.full_like(grid_z, base_infiltration)
             infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
             infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
