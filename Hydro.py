@@ -205,7 +205,7 @@ if uploaded_stl and run_button:
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res)
-    yi = np.linspace(bottom_bound, top_bound, grid_res)  # Fixed typo: custom_bound -> bottom_bound
+    yi = np.linspace(bottom_bound, top_bound, grid_res)
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
@@ -296,7 +296,7 @@ if uploaded_stl and run_button:
         grid.flowdir(data='inflated_dem', out_name='fdir')
         grid.accumulation(data='fdir', out_name='flow_acc')
         flow_acc = grid.flow_acc
-        flow_acc_to_plot = np.flipud(flow_acc)  # Flip back for plotting consistency
+        flow_acc_to_plot = np.flipud(flow_acc)
     os.unlink(tmp_dem.name)  # Clean up temporary file
 
     # Flood risk map
@@ -315,7 +315,7 @@ if uploaded_stl and run_button:
         ax.set_ylabel('Latitude (°N)')
         return im
 
-    with tabs[0]:  # DEM & Flow Simulation
+    with tabs[0]:
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max)
         step = max(1, grid_res // 20)
@@ -324,7 +324,7 @@ if uploaded_stl and run_button:
                   color='blue', scale=1e5, width=0.0025)
         st.pyplot(fig)
 
-    with tabs[1]:  # Burned Areas
+    with tabs[1]:
         st.header("Burned Areas")
         if burned_mask_resampled is not None:
             fig, ax = plt.subplots()
@@ -340,7 +340,7 @@ if uploaded_stl and run_button:
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
 
-    with tabs[2]:  # Flood Risk Map
+    with tabs[2]:
         st.header("Flood Risk Map")
         st.write("Areas with higher values indicate increased flood risk due to burned areas and water accumulation.")
         fig, ax = plt.subplots()
@@ -348,7 +348,7 @@ if uploaded_stl and run_button:
         fig.colorbar(im, ax=ax, label='Flood Risk')
         st.pyplot(fig)
 
-    with tabs[3]:  # Slope Map
+    with tabs[3]:
         with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
             slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
@@ -358,7 +358,7 @@ if uploaded_stl and run_button:
         plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
         st.pyplot(fig)
 
-    with tabs[4]:  # Aspect Map
+    with tabs[4]:
         with st.expander("Visualization Options"):
             aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
             aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
@@ -368,39 +368,39 @@ if uploaded_stl and run_button:
         plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
         st.pyplot(fig)
 
-    with tabs[5]:  # Retention Time
+    with tabs[5]:
         st.subheader("Retention Time")
         if retention_time is not None:
             st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
         else:
             st.write("No effective runoff → Retention time not applicable.")
 
-    with tabs[6]:  # GeoTIFF Export
+    with tabs[6]:
         st.subheader("GeoTIFF Export")
         st.write("Export functionality to be implemented.")
 
-    with tabs[7]:  # Nutrient Leaching
+    with tabs[7]:
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    with tabs[8]:  # Flow Accumulation
+    with tabs[8]:
         st.subheader("Flow Accumulation")
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, flow_acc_to_plot, 'Blues')
         st.pyplot(fig)
 
-    with tabs[9]:  # TWI
+    with tabs[9]:
         st.subheader("Topographic Wetness Index")
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, twi, 'RdYlBu')
         st.pyplot(fig)
 
-    with tabs[10]:  # Curvature
+    with tabs[10]:
         st.subheader("Curvature Analysis")
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, curvature, 'Spectral')
         st.pyplot(fig)
 
-    with tabs[11]:  # Scenario GIFs
+    with tabs[11]:
         st.write("GIF generation to be implemented.")
 
 else:
