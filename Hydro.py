@@ -941,7 +941,6 @@ with tabs[0]:
                 st.write("No data available for comparison. Ensure burned areas are detected in the TIFF.")
         else:
             st.write("No burned area data available for comparison. Upload a valid burned-area TIFF.")
-
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
 
