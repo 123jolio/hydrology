@@ -13,15 +13,10 @@ import os
 from PIL import Image
 from scipy.ndimage import convolve
 from matplotlib.colors import ListedColormap
-
-# For 3D STL viewing (install via: pip install streamlit-stl-viewer)
-try:
-    import streamlit_stl_viewer as stl_viewer
-except ImportError:
-    st.warning("streamlit-stl-viewer not installed. Run 'pip install streamlit-stl-viewer' to enable 3D viewing.")
+import plotly.graph_objects as go  # For 3D STL viewer
 
 # -----------------------------------------------------------------------------
-# 1. Page Config & Matplotlib style
+# 1. Page Config & Matplotlib Style
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
 plt.style.use('dark_background')
@@ -137,7 +132,7 @@ with st.container():
     st.markdown('</div>', unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 5. Define Tabs (13 tabs: including new ones)
+# 5. Define Tabs (including new tabs for Hydro Impacts and 3D Viewer)
 # -----------------------------------------------------------------------------
 tabs = st.tabs([
     "DEM & Flow Simulation", "Burned Areas", "Slope Map", "Aspect Map", 
@@ -147,7 +142,7 @@ tabs = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# 6. Define Georeference Bounds
+# 6. Georeference Bounds
 # -----------------------------------------------------------------------------
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
@@ -273,14 +268,11 @@ if uploaded_stl and run_button:
                 tmp_tif.write(uploaded_burned.read())
                 with rasterio.open(tmp_tif.name) as src:
                     src_crs = src.crs if src.crs is not None else "EPSG:4326"
-                    # Require an RGB image (at least 3 bands)
                     if src.count < 3:
                         st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                     else:
                         red = src.read(1)
-                        # Use a threshold on the red channel
                         burned_mask = (red > burn_threshold_val).astype(np.float32)
-                        # If the burned mask shape differs from grid_z, reproject/resample it:
                         if burned_mask.shape != grid_z.shape:
                             st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
                             resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
@@ -300,18 +292,22 @@ if uploaded_stl and run_button:
             burned_mask = None
 
     # Terrain derivatives (simplified)
-    flow_acc = np.ones_like(grid_z)  # Placeholder for flow accumulation
+    flow_acc = np.ones_like(grid_z)  # Placeholder
     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # -----------------------------------------------------------------------------
-    # Helper: Plotting with Burned Overlay
+    # Helper: Plotting Function with Burned Overlay
     # -----------------------------------------------------------------------------
     def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
-        im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
+        im = ax.imshow(data, cmap=cmap, origin='lower',
+                       extent=(left_bound, right_bound, bottom_bound, top_bound),
+                       vmin=vmin, vmax=vmax)
         if show_burned and (burned_mask is not None):
             burned_cmap = ListedColormap(['none', 'red'])
-            ax.imshow(burned_mask, cmap=burned_cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), alpha=alpha)
+            ax.imshow(burned_mask, cmap=burned_cmap, origin='lower',
+                      extent=(left_bound, right_bound, bottom_bound, top_bound),
+                      alpha=alpha)
         aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
         ax.set_aspect(aspect_ratio)
         ax.set_xlabel('Longitude (°E)')
@@ -440,14 +436,14 @@ if uploaded_stl and run_button:
                                  show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
-    # Burned-Area Hydro Impacts Tab (new)
+    # Burned-Area Hydro Impacts Tab
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
         st.markdown("""
         **Hydrogeologic Impacts of Burned Areas**  
-        - **Reduced Infiltration**: Burned areas often become hydrophobic, reducing infiltration and increasing surface runoff.  
-        - **Accelerated Erosion**: Lack of vegetation leads to higher soil erosion and sediment transport.  
-        - **Decreased Groundwater Recharge**: Lower infiltration means less water recharges aquifers.  
+        - **Reduced Infiltration**: Burned areas tend to become hydrophobic, reducing infiltration and increasing surface runoff.  
+        - **Accelerated Erosion**: Loss of vegetation increases soil erosion and sediment yield.  
+        - **Decreased Groundwater Recharge**: Lower infiltration can reduce aquifer recharge.  
         - **Water Quality Impacts**: Increased runoff can carry ash and nutrients into waterways.
         """)
         st.subheader("Advanced Burned-Area Parameters")
@@ -455,33 +451,22 @@ if uploaded_stl and run_button:
         infiltration_reduction = st.slider("Infiltration Reduction in Burned Areas (fraction)", 0.0, 1.0, 0.5, 0.05)
         base_erosion_rate = st.number_input("Base Erosion Rate (tons/ha)", value=0.5, step=0.1)
         erosion_multiplier_burned = st.slider("Erosion Multiplier in Burned Areas", 1.0, 5.0, 2.0, 0.1)
-
         if burned_mask is not None:
-            # Create an infiltration map (same shape as DEM) with base infiltration
             infiltration_map = np.full_like(grid_z, base_infiltration, dtype=np.float32)
-            # Reduce infiltration in burned areas (burned_mask assumed to be 0/1)
             infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
             infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
-            st.write(f"**Infiltration Volume** over domain: ~{infiltration_volume_total:.2f} (mm-hr equiv.)")
-            
-            # Erosion estimation (simplified)
+            st.write(f"**Infiltration Volume:** ~{infiltration_volume_total:.2f} mm-hr equiv.")
             erosion_map = np.full_like(grid_z, base_erosion_rate, dtype=np.float32)
             erosion_map[burned_mask == 1] *= erosion_multiplier_burned
             total_erosion = erosion_map.sum()
-            st.write(f"**Estimated Erosion** (placeholder sum): {total_erosion:.2f} tons")
-            
-            # Adjusted runoff coefficient (placeholder calculation)
+            st.write(f"**Estimated Erosion:** {total_erosion:.2f} tons")
             infiltration_ratio = infiltration_map.mean() / base_infiltration
             new_runoff_coefficient = runoff_val + burn_factor_val * (1.0 - infiltration_ratio)
             new_runoff_coefficient = np.clip(new_runoff_coefficient, 0.0, 1.0)
-            st.write(f"**Adjusted Runoff Coefficient** (approx): {new_runoff_coefficient:.2f}")
-            
-            # Potential water quality impact (placeholder)
+            st.write(f"**Adjusted Runoff Coefficient:** {new_runoff_coefficient:.2f}")
             burned_fraction = burned_mask.mean()
             nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)
-            st.write(f"**Potential Nutrient Load**: from {nutrient_load:.2f} kg to ~{nutrient_load_burned:.2f} kg")
-            
-            # Display infiltration map
+            st.write(f"**Potential Nutrient Load:** from {nutrient_load:.2f} kg to ~{nutrient_load_burned:.2f} kg")
             st.subheader("Infiltration Map (mm/hr)")
             fig, ax = plt.subplots()
             im = ax.imshow(infiltration_map, cmap='Greens', origin='lower',
@@ -492,23 +477,42 @@ if uploaded_stl and run_button:
             ax.set_ylabel('Latitude (°N)')
             fig.colorbar(im, ax=ax, label="Infiltration Rate (mm/hr)")
             st.pyplot(fig)
-            
             st.info("""
             **Interpretation**:  
-            - Burned areas show reduced infiltration rates (simulating hydrophobic soils), leading to increased runoff and potential erosion.
-            - The adjusted runoff coefficient and increased nutrient load illustrate possible water-quality impacts.
+            - Burned areas show reduced infiltration rates, leading to increased runoff and potential erosion.  
+            - The adjusted runoff coefficient and increased nutrient load suggest possible water-quality impacts.
             """)
         else:
             st.warning("No burned area detected. Please upload a valid burned-area TIFF.")
 
-    # 3D STL Viewer Tab (new)
+    # 3D STL Viewer Tab using Plotly
     with tabs[12]:
         st.header("3D STL Viewer")
         if uploaded_stl:
             try:
-                stl_viewer.display_stl(uploaded_stl)
+                # Load STL from the file buffer again (or reuse from earlier)
+                uploaded_stl.seek(0)
+                stl_mesh_3d = mesh.Mesh.from_file(uploaded_stl)
+                vertices = stl_mesh_3d.vectors.reshape(-1, 3)
+                n_triangles = len(stl_mesh_3d.vectors)
+                # Create faces: each triangle has 3 vertices.
+                faces = np.array([[3*i, 3*i+1, 3*i+2] for i in range(n_triangles)])
+                fig = go.Figure(data=[
+                    go.Mesh3d(
+                        x=vertices[:, 0],
+                        y=vertices[:, 1],
+                        z=vertices[:, 2],
+                        i=faces[:, 0],
+                        j=faces[:, 1],
+                        k=faces[:, 2],
+                        opacity=0.5,
+                        color='lightblue'
+                    )
+                ])
+                fig.update_layout(scene=dict(aspectmode='data'))
+                st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"Error displaying STL in 3D: {e}")
+                st.error(f"Error displaying 3D STL: {e}")
         else:
             st.write("No STL file uploaded.")
 
