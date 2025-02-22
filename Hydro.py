@@ -203,26 +203,26 @@ with tabs[0]:
             st.session_state.processed_data = None
             if uploaded_stl:
                 # Retrieve parameters from session state
-                scale_val = st.session_state.scale
-                offset_val = st.session_state.offset
-                dem_min_val = st.session_state.dem_min
-                dem_max_val = st.session_state.dem_max
-                grid_res_val = st.session_state.grid_res
-                rainfall_val = st.session_state.rainfall
-                duration_val = st.session_state.duration
-                area_val = st.session_state.area
-                runoff_val = st.session_state.runoff
-                recession_val = st.session_state.recession
-                sim_hours_val = st.session_state.sim_hours
-                storage_val = st.session_state.storage
-                burn_factor_val = st.session_state.burn_factor
-                burn_threshold_val = st.session_state.burn_threshold
-                band_to_threshold = st.session_state.band_threshold
-                nutrient_val = st.session_state.nutrient
-                retention_val = st.session_state.retention
-                erosion_val = st.session_state.erosion
-                gif_frames_val = st.session_state.gif_frames
-                gif_fps_val = st.session_state.gif_fps
+                scale_val = st.session_state.get('scale', 1.0)
+                offset_val = st.session_state.get('offset', 0.0)
+                dem_min_val = st.session_state.get('dem_min', 0.0)
+                dem_max_val = st.session_state.get('dem_max', 500.0)
+                grid_res_val = st.session_state.get('grid_res', 500)
+                rainfall_val = st.session_state.get('rainfall', 30.0)
+                duration_val = st.session_state.get('duration', 2.0)
+                area_val = st.session_state.get('area', 10.0)
+                runoff_val = st.session_state.get('runoff', 0.5)
+                recession_val = st.session_state.get('recession', 0.5)
+                sim_hours_val = st.session_state.get('sim_hours', 6.0)
+                storage_val = st.session_state.get('storage', 5000.0)
+                burn_factor_val = st.session_state.get('burn_factor', 1.0)
+                burn_threshold_val = st.session_state.get('burn_threshold', 200)
+                band_to_threshold = st.session_state.get('band_threshold', "Red")
+                nutrient_val = st.session_state.get('nutrient', 50.0)
+                retention_val = st.session_state.get('retention', 0.7)
+                erosion_val = st.session_state.get('erosion', 0.3)
+                gif_frames_val = st.session_state.get('gif_frames', 10)
+                gif_fps_val = st.session_state.get('gif_fps', 2)
 
                 # Load STL
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
@@ -374,8 +374,30 @@ with tabs[0]:
             st.error(f"Error processing data: {e}")
             st.session_state.processed_data = None
 
-    # If data is processed, display dynamically
+    # If data is processed, retrieve parameters for display
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+        # Retrieve parameters from session state for display logic
+        scale_val = st.session_state.get('scale', 1.0)
+        offset_val = st.session_state.get('offset', 0.0)
+        dem_min_val = st.session_state.get('dem_min', 0.0)
+        dem_max_val = st.session_state.get('dem_max', 500.0)
+        grid_res_val = st.session_state.get('grid_res', 500)
+        rainfall_val = st.session_state.get('rainfall', 30.0)
+        duration_val = st.session_state.get('duration', 2.0)
+        area_val = st.session_state.get('area', 10.0)
+        runoff_val = st.session_state.get('runoff', 0.5)
+        recession_val = st.session_state.get('recession', 0.5)
+        sim_hours_val = st.session_state.get('sim_hours', 6.0)
+        storage_val = st.session_state.get('storage', 5000.0)
+        burn_factor_val = st.session_state.get('burn_factor', 1.0)
+        burn_threshold_val = st.session_state.get('burn_threshold', 200)
+        band_to_threshold = st.session_state.get('band_threshold', "Red")
+        nutrient_val = st.session_state.get('nutrient', 50.0)
+        retention_val = st.session_state.get('retention', 0.7)
+        erosion_val = st.session_state.get('erosion', 0.3)
+        gif_frames_val = st.session_state.get('gif_frames', 10)
+        gif_fps_val = st.session_state.get('gif_fps', 2)
+
         grid_z = st.session_state.processed_data['grid_z']
         slope = st.session_state.processed_data['slope']
         aspect = st.session_state.processed_data['aspect']
@@ -446,23 +468,26 @@ with tabs[0]:
         st.markdown("### This tab shows the distribution of burned areas from the uploaded TIFF.")
         st.markdown("**Instructions**: Upload a georeferenced RGB TIFF to visualize burned areas. If no data appears, ensure the TIFF is valid, has 3 bands, and adjust the 'Burned Area Threshold' in the 'DEM & Flow Simulation' tab to detect burned regions.")
         
-        if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
             burned_mask = st.session_state.processed_data['burned_mask']
-            fig, ax = plt.subplots()
-            cmap = ListedColormap(['red', 'black'])
-            im = ax.imshow(
-                np.flipud(burned_mask), cmap=cmap, origin='upper',  # Flip to correct orientation
-                extent=(left_bound, right_bound, bottom_bound, top_bound)
-            )
-            st.markdown("**Burned Areas Map**: Red areas indicate burned regions (value=1), black areas are unburned (value=0). Adjust the threshold to capture more or fewer burned areas if the map is uniform.")
-            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
-            aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
-            ax.set_aspect(aspect_ratio)
-            ax.set_xlabel('Longitude (°E)')
-            ax.set_ylabel('Latitude (°N)')
-            cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Unburned', 'Burned'])  # Updated for clarity
-            st.pyplot(fig)
+            if burned_mask is not None:
+                fig, ax = plt.subplots()
+                cmap = ListedColormap(['red', 'black'])
+                im = ax.imshow(
+                    np.flipud(burned_mask), cmap=cmap, origin='upper',  # Flip to correct orientation
+                    extent=(left_bound, right_bound, bottom_bound, top_bound)
+                )
+                st.markdown("**Burned Areas Map**: Red areas indicate burned regions (value=1), black areas are unburned (value=0). Adjust the threshold to capture more or fewer burned areas if the map is uniform.")
+                aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
+                aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
+                ax.set_aspect(aspect_ratio)
+                ax.set_xlabel('Longitude (°E)')
+                ax.set_ylabel('Latitude (°N)')
+                cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
+                cbar.ax.set_yticklabels(['Unburned', 'Burned'])  # Updated for clarity
+                st.pyplot(fig)
+            else:
+                st.write("No burned area data uploaded or TIFF processing failed.")
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
 
@@ -700,6 +725,28 @@ with tabs[0]:
         )
 
         if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+            # Retrieve parameters for display logic
+            scale_val = st.session_state.get('scale', 1.0)
+            offset_val = st.session_state.get('offset', 0.0)
+            dem_min_val = st.session_state.get('dem_min', 0.0)
+            dem_max_val = st.session_state.get('dem_max', 500.0)
+            grid_res_val = st.session_state.get('grid_res', 500)
+            rainfall_val = st.session_state.get('rainfall', 30.0)
+            duration_val = st.session_state.get('duration', 2.0)
+            area_val = st.session_state.get('area', 10.0)
+            runoff_val = st.session_state.get('runoff', 0.5)
+            recession_val = st.session_state.get('recession', 0.5)
+            sim_hours_val = st.session_state.get('sim_hours', 6.0)
+            storage_val = st.session_state.get('storage', 5000.0)
+            burn_factor_val = st.session_state.get('burn_factor', 1.0)
+            burn_threshold_val = st.session_state.get('burn_threshold', 200)
+            band_to_threshold = st.session_state.get('band_threshold', "Red")
+            nutrient_val = st.session_state.get('nutrient', 50.0)
+            retention_val = st.session_state.get('retention', 0.7)
+            erosion_val = st.session_state.get('erosion', 0.3)
+            gif_frames_val = st.session_state.get('gif_frames', 10)
+            gif_fps_val = st.session_state.get('gif_fps', 2)
+
             grid_z = st.session_state.processed_data['grid_z']
             slope = st.session_state.processed_data['slope']
             burned_mask = st.session_state.processed_data['burned_mask']
@@ -820,6 +867,28 @@ with tabs[0]:
         st.markdown("**Instructions**: If no comparison appears, ensure a burned-area TIFF is uploaded and shows variation. Adjust parameters in other tabs to enhance differences.")
         
         if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+            # Retrieve parameters for display logic
+            scale_val = st.session_state.get('scale', 1.0)
+            offset_val = st.session_state.get('offset', 0.0)
+            dem_min_val = st.session_state.get('dem_min', 0.0)
+            dem_max_val = st.session_state.get('dem_max', 500.0)
+            grid_res_val = st.session_state.get('grid_res', 500)
+            rainfall_val = st.session_state.get('rainfall', 30.0)
+            duration_val = st.session_state.get('duration', 2.0)
+            area_val = st.session_state.get('area', 10.0)
+            runoff_val = st.session_state.get('runoff', 0.5)
+            recession_val = st.session_state.get('recession', 0.5)
+            sim_hours_val = st.session_state.get('sim_hours', 6.0)
+            storage_val = st.session_state.get('storage', 5000.0)
+            burn_factor_val = st.session_state.get('burn_factor', 1.0)
+            burn_threshold_val = st.session_state.get('burn_threshold', 200)
+            band_to_threshold = st.session_state.get('band_threshold', "Red")
+            nutrient_val = st.session_state.get('nutrient', 50.0)
+            retention_val = st.session_state.get('retention', 0.7)
+            erosion_val = st.session_state.get('erosion', 0.3)
+            gif_frames_val = st.session_state.get('gif_frames', 10)
+            gif_fps_val = st.session_state.get('gif_fps', 2)
+
             grid_z = st.session_state.processed_data['grid_z']
             slope = st.session_state.processed_data['slope']
             aspect = st.session_state.processed_data['aspect']
