@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Define tabs (example tab list; adjust as needed)
+# Define tabs
 tab_names = [
     "DEM & Flow Simulation", "Slope & Aspect", "Flow Accumulation",
     "Retention Time", "Nutrient Leaching", "Burned Area Detection",
@@ -26,12 +26,12 @@ tabs = st.tabs(tab_names)
 # Georeference bounding box (EPSG:4326) - Example coordinates
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
-# File uploaders and run button (moved to the top for accessibility)
+# File uploaders and run button
 uploaded_stl = st.file_uploader("Upload STL File", type=["stl"])
 uploaded_tiff = st.file_uploader("Upload Burned Areas TIFF", type=["tif", "tiff"])
 run_button = st.button("Run Analysis")
 
-# DEM & Flow Simulation Tab (unchanged example)
+# DEM & Flow Simulation Tab
 with tabs[0]:
     st.header("DEM & Flow Simulation")
     scale_val = st.slider("Scale Factor", 0.1, 10.0, 1.0)
@@ -51,6 +51,8 @@ with tabs[0]:
     nutrient_val = st.slider("Nutrient Load (kg/ha)", 0.0, 10.0, 1.0)
     retention_val = st.slider("Retention Factor", 0.0, 1.0, 0.5)
     erosion_val = st.slider("Erosion Rate (tons/ha)", 0.0, 5.0, 0.5)
+    
+    # Store parameters in session state
     st.session_state.update({
         'scale': scale_val, 'offset': offset_val, 'dem_min': dem_min_val,
         'dem_max': dem_max_val, 'grid_res': grid_res_val, 'rainfall': rainfall_val,
@@ -91,11 +93,11 @@ if uploaded_stl and run_button:
     z_adj = (z_raw * scale_val) + offset_val
 
     x_min, x_max = x_raw.min(), x_raw.max()
-    y_min, y_max = y_raw.min(), y_max.max()
+    y_min, y_max = y_raw.min(), y_raw.max()
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res_val)
-    yi = np.linspace(bottom_bound, top_bound, grid_res_val)
+    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Note: `bottom_bound` should be used instead of `custom_bound`
     grid_x, grid_y = np.meshgrid(xi, yi)
 
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
@@ -123,13 +125,12 @@ if uploaded_stl and run_button:
             xs, ys = np.array(xs), np.array(ys)
             points = np.column_stack((xs.ravel(), ys.ravel()))
             values = band1.ravel()
-            # Interpolate onto the DEM grid using nearest-neighbor
             burned_values = griddata(points, values, (grid_x, grid_y), method='nearest')
             burned_mask = (burned_values > burn_threshold_val).astype(int)
     else:
         st.warning("No burned areas TIFF uploaded. Please upload a TIFF file to see the impact maps.")
 
-    # *** Burned-Area Hydro Impacts Tab ***
+    # Burned-Area Hydro Impacts Tab
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
 
@@ -220,7 +221,7 @@ if uploaded_stl and run_button:
             st.write("""
             - **Infiltration Map**: Shows infiltration rates (mm/hr), with lower values in burned areas due to reduced soil absorption capacity.
             - **Runoff Coefficient Map**: Displays the fraction of rainfall that becomes runoff, higher in burned areas.
-            - **Runoff Depth Map**: Indicates total runoff depth (mm), with higher values where runoff coefficients are elevated.
+            - **Runoff Depth Map**: Indicates total runoff depth (mm), calculated from the runoff coefficient and rainfall.
             - **Erosion Risk Map**: Highlights areas at risk of erosion, amplified by steep slopes and burned conditions.
             """)
         else:
