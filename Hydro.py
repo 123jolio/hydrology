@@ -221,7 +221,7 @@ with tabs[0]:
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
         
         st.markdown("**Burned Area Threshold**: Sets the pixel value threshold (0–255) for detecting burned areas in the selected band. Lower values detect more burned areas; adjust if maps lack variation.")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 200, 1, key="burn_threshold")
         
         st.markdown("**Band for Burned Area Threshold**: Selects the color band (Red, Green, Blue) for thresholding burned areas. Choose based on TIFF data; Red often highlights burned areas, but Green/Blue may work better for specific images.")
         band_to_threshold = st.selectbox("Band for Burned Area Threshold", ["Red", "Green", "Blue"], key="band_threshold")
@@ -444,7 +444,7 @@ with tabs[0]:
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
         st.markdown("**DEM & Flow Visualization**: Shows the terrain elevation (m) with flow direction arrows (blue). Steeper slopes and burned areas affect flow paths; adjust parameters to see changes.")
-        step = max(1, grid_res_val // 20)
+        step = max(1, grid_x.shape[0] // 20)  # Updated to use grid_x.shape[0]
         ax.quiver(
             grid_x[::step, ::step], grid_y[::step, ::step],
             -dz_dx[::step, ::step], -dz_dy[::step, ::step],
@@ -706,7 +706,7 @@ with tabs[10]:
     st.markdown("**Instructions**: Upload files and adjust GIF settings. Future updates will enable dynamic visualization of hydrological changes over time.")
 
 # -----------------------------------------------------------------------------
-# Burned-Area Hydro Impacts Tab (Unchanged)
+# Burned-Area Hydro Impacts Tab (Updated)
 # -----------------------------------------------------------------------------
 with tabs[11]:
     st.header("Burned-Area Hydro Impacts")
@@ -767,7 +767,7 @@ with tabs[11]:
         erosion_map = np.full_like(grid_z, base_erosion_rate)
         erosion_map[burned_mask == 1] *= erosion_multiplier_burned
         area_m2 = area_val * 10000.0
-        area_per_cell_m2 = area_m2 / (grid_res_val * grid_res_val)
+        area_per_cell_m2 = area_m2 / grid_z.size  # Updated to use grid_z.size
         total_erosion_unburned = np.sum(erosion_map[burned_mask == 0]) * (area_per_cell_m2 / 10000)
         total_erosion_burned = np.sum(erosion_map[burned_mask == 1]) * (area_per_cell_m2 / 10000)
         total_erosion = total_erosion_unburned + total_erosion_burned
