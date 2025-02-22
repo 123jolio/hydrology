@@ -148,7 +148,7 @@ with tabs[0]:
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 10, 1, key="burn_threshold")  # Very low default threshold
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")  # Set default threshold to 240
 
 # Nutrient Leaching Tab
 with tabs[6]:
@@ -251,9 +251,10 @@ if uploaded_stl and run_button:
                         green = src.read(2)
                         blue = src.read(3)
                         # Detect burned areas (red regions: high red, low green/blue)
-                        burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
-                        # Optionally, use the adjustable threshold for fine-tuning
-                        burned_mask = (red > burn_threshold).astype(np.float32)  # Use threshold for red channel
+                        # Using the adjustable threshold for red channel only to detect burned areas
+                        burned_mask = (red > burn_threshold).astype(np.float32)
+                        # Optionally, add color-based check for robustness
+                        # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
             burned_mask = None
@@ -285,10 +286,16 @@ if uploaded_stl and run_button:
         st.header("Burned Areas")
         if burned_mask is not None:
             fig, ax = plt.subplots()
-            cmap = ListedColormap(['black', 'red'])
-            im = plot_with_correct_aspect(ax, burned_mask, cmap)
+            # Reverse colormap: 0 = Burned (red), 1 = Non-burned (black)
+            cmap = ListedColormap(['red', 'black'])
+            # Use origin='upper' to flip the plot upright
+            im = ax.imshow(burned_mask, cmap=cmap, origin='upper', extent=(left_bound, right_bound, bottom_bound, top_bound))
+            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
+            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])  # Reversed labels
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
