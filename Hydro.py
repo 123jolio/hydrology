@@ -310,7 +310,8 @@ if uploaded_stl and run_button:
                        extent=(left_bound, right_bound, bottom_bound, top_bound),
                        vmin=vmin, vmax=vmax)
         if show_burned and (burned_mask is not None):
-            burned_cmap = ListedColormap(['none', 'red'])
+            # Use an RGBA tuple for transparent non-burned areas and red for burned areas
+            burned_cmap = ListedColormap([(0, 0, 0, 0), 'red'])
             ax.imshow(burned_mask, cmap=burned_cmap, origin='lower',
                       extent=(left_bound, right_bound, bottom_bound, top_bound),
                       alpha=alpha)
@@ -351,7 +352,8 @@ if uploaded_stl and run_button:
         st.header("Burned Areas")
         if burned_mask is not None:
             fig, ax = plt.subplots()
-            cmap_burn = ListedColormap(['red', 'black'])
+            # Reverse colormap order so that value 1 is red (burned) and 0 is black (non-burned)
+            cmap_burn = ListedColormap(['black', 'red'])
             im = ax.imshow(burned_mask, cmap=cmap_burn, origin='upper',
                            extent=(left_bound, right_bound, bottom_bound, top_bound))
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
@@ -359,7 +361,7 @@ if uploaded_stl and run_button:
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])
+            cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
