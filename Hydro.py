@@ -14,7 +14,7 @@ from PIL import Image
 from scipy.ndimage import convolve, zoom
 from matplotlib.colors import ListedColormap
 import pandas as pd
-import math  # Added for radians conversion
+import math  # For radians conversion
 
 # -----------------------------------------------------------------------------
 # 1. Streamlit Page Config
@@ -145,8 +145,32 @@ left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.04
 
 # Calculate meters per degree for aspect ratio (defined globally)
 avg_lat = (top_bound + bottom_bound) / 2.0
-meters_per_deg_lon = 111320 * math.cos(math.radians(avg_lat))  # Corrected to math.radians
+meters_per_deg_lon = 111320 * math.cos(math.radians(avg_lat))
 meters_per_deg_lat = 111320
+
+# -----------------------------------------------------------------------------
+# Helper function for plotting with burned area overlay
+# -----------------------------------------------------------------------------
+def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
+                             burned_mask=None, show_burned=True, alpha=0.5):
+    data = np.flipud(data)
+    if burned_mask is not None and show_burned:
+        burned_mask = np.flipud(burned_mask)
+    
+    im = ax.imshow(data, cmap=cmap, origin='upper',
+                   extent=(left_bound, right_bound, bottom_bound, top_bound),
+                   vmin=vmin, vmax=vmax)
+    if show_burned and burned_mask is not None:
+        burned_cmap = ListedColormap(['none', 'red'])
+        ax.imshow(burned_mask, cmap=burned_cmap, origin='upper',
+                  extent=(left_bound, right_bound, bottom_bound, top_bound),
+                  alpha=alpha)
+    aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
+    aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
+    ax.set_aspect(aspect_ratio)
+    ax.set_xlabel('Longitude (°E)')
+    ax.set_ylabel('Latitude (°N)')
+    return im
 
 # -----------------------------------------------------------------------------
 # 7. Parameter Inputs in "DEM & Flow Simulation" Tab
@@ -369,7 +393,9 @@ with tabs[0]:
                         'grid_x': grid_x,
                         'grid_y': grid_y,
                         'dz_dx': dz_dx,
-                        'dz_dy': dz_dy
+                        'dz_dy': dz_dy,
+                        'dem_min_val': dem_min_val,
+                        'dem_max_val': dem_max_val
                     }
                     st.write("Analysis complete!")
                 except Exception as e:
@@ -397,6 +423,8 @@ with tabs[0]:
         grid_y = st.session_state.processed_data['grid_y']
         dz_dx = st.session_state.processed_data['dz_dx']
         dz_dy = st.session_state.processed_data['dz_dy']
+        dem_min_val = st.session_state.processed_data['dem_min_val']
+        dem_max_val = st.session_state.processed_data['dem_max_val']
 
         st.header("DEM & Flow Simulation")
         st.markdown("### This tab displays the Digital Elevation Model (DEM) and flow simulation results.")
@@ -865,7 +893,7 @@ with tabs[0]:
                         "Burned Mean": np.mean(burned_data),
                         "Unburned Mean": np.mean(unburned_data),
                         "Burned Median": np.median(burned_data),
-                        "Unburned Median": np.median(unburned_data),
+                        "Unburned Median": np.median(burned_data),
                         "Burned Std": np.std(burned_data),
                         "Unburned Std": np.std(unburned_data)
                     }
@@ -878,27 +906,3 @@ with tabs[0]:
                 st.write("No data available for comparison. Ensure burned areas are detected in the TIFF.")
         else:
             st.write("No burned area data available for comparison. Upload a valid burned-area TIFF.")
-
-# -----------------------------------------------------------------------------
-# Helper function for plotting with burned area overlay
-# -----------------------------------------------------------------------------
-def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
-                            burned_mask=None, show_burned=True, alpha=0.5):
-    data = np.flipud(data)
-    if burned_mask is not None and show_burned:
-        burned_mask = np.flipud(burned_mask)
-    
-    im = ax.imshow(data, cmap=cmap, origin='upper',
-                   extent=(left_bound, right_bound, bottom_bound, top_bound),
-                   vmin=vmin, vmax=vmax)
-    if show_burned and burned_mask is not None:
-        burned_cmap = ListedColormap(['none', 'red'])
-        ax.imshow(burned_mask, cmap=burned_cmap, origin='upper',
-                  extent=(left_bound, right_bound, bottom_bound, top_bound),
-                  alpha=alpha)
-    aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
-    aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
-    ax.set_aspect(aspect_ratio)
-    ax.set_xlabel('Longitude (°E)')
-    ax.set_ylabel('Latitude (°N)')
-    return im
