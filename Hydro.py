@@ -273,6 +273,8 @@ if uploaded_stl and run_button:
                     else:
                         red = src.read(1)
                         burned_mask = (red > burn_threshold_val).astype(np.float32)
+                        # Force binary (0 or 1)
+                        burned_mask[burned_mask > 0] = 1
                         if burned_mask.shape != grid_z.shape:
                             st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
                             resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
@@ -297,7 +299,7 @@ if uploaded_stl and run_button:
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # -----------------------------------------------------------------------------
-    # Helper: Plotting Function with Burned Overlay
+    # Helper: Plotting with Burned Overlay
     # -----------------------------------------------------------------------------
     def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
         im = ax.imshow(data, cmap=cmap, origin='lower',
@@ -441,8 +443,8 @@ if uploaded_stl and run_button:
         st.header("Burned-Area Hydro Impacts")
         st.markdown("""
         **Hydrogeologic Impacts of Burned Areas**  
-        - **Reduced Infiltration**: Burned areas tend to become hydrophobic, reducing infiltration and increasing surface runoff.  
-        - **Accelerated Erosion**: Loss of vegetation increases soil erosion and sediment yield.  
+        - **Reduced Infiltration**: Burned areas often become hydrophobic, reducing infiltration and increasing surface runoff.  
+        - **Accelerated Erosion**: Lack of vegetation increases soil erosion and sediment yield.  
         - **Decreased Groundwater Recharge**: Lower infiltration can reduce aquifer recharge.  
         - **Water Quality Impacts**: Increased runoff can carry ash and nutrients into waterways.
         """)
@@ -485,17 +487,18 @@ if uploaded_stl and run_button:
         else:
             st.warning("No burned area detected. Please upload a valid burned-area TIFF.")
 
-    # 3D STL Viewer Tab using Plotly
+    # 3D STL Viewer Tab using Plotly Mesh3d
     with tabs[12]:
         st.header("3D STL Viewer")
         if uploaded_stl:
             try:
-                # Load STL from the file buffer again (or reuse from earlier)
-                uploaded_stl.seek(0)
-                stl_mesh_3d = mesh.Mesh.from_file(uploaded_stl)
+                # Write uploaded STL to temporary file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_3d:
+                    tmp_3d.write(uploaded_stl.read())
+                    stl_path = tmp_3d.name
+                stl_mesh_3d = mesh.Mesh.from_file(stl_path)
                 vertices = stl_mesh_3d.vectors.reshape(-1, 3)
                 n_triangles = len(stl_mesh_3d.vectors)
-                # Create faces: each triangle has 3 vertices.
                 faces = np.array([[3*i, 3*i+1, 3*i+2] for i in range(n_triangles)])
                 fig = go.Figure(data=[
                     go.Mesh3d(
