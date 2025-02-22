@@ -489,7 +489,7 @@ with tabs[0]:
             else:
                 st.write("No burned area data uploaded or TIFF processing failed.")
         else:
-            st.write("No burned area data uploaded or TIFF processing failed.")
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Slope Map tab
     with tabs[2]:
@@ -528,6 +528,8 @@ with tabs[0]:
             )
             st.markdown("**Slope Map**: Shows terrain slope in degrees (0–90°), with steeper areas indicating higher runoff and erosion potential. Use sliders to adjust the range and colormap for better visualization.")
             st.pyplot(fig)
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Aspect Map tab
     with tabs[3]:
@@ -566,6 +568,8 @@ with tabs[0]:
             )
             st.markdown("**Aspect Map**: Shows terrain aspect in degrees (0–360°), indicating flow direction. Use sliders to adjust range and colormap for better visualization.")
             st.pyplot(fig)
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Retention Time tab
     with tabs[4]:
@@ -580,6 +584,8 @@ with tabs[0]:
                 st.markdown("**Retention Time**: Indicates how long water is held before draining, based on storage volume and runoff. Higher storage or lower runoff increases retention; adjust parameters to test scenarios.")
             else:
                 st.write("No effective runoff → Retention time not applicable.")
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # GeoTIFF Export tab
     with tabs[5]:
@@ -596,6 +602,8 @@ with tabs[0]:
         if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
             nutrient_load = st.session_state.processed_data['nutrient_load']
             st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Flow Accumulation tab
     with tabs[7]:
@@ -624,6 +632,8 @@ with tabs[0]:
             )
             st.markdown("**Flow Accumulation Map**: Shows water accumulation (arbitrary units). Higher values indicate areas receiving more flow; adjust DEM parameters for variability.")
             st.pyplot(fig)
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # TWI tab
     with tabs[8]:
@@ -652,6 +662,8 @@ with tabs[0]:
             )
             st.markdown("**Topographic Wetness Index Map**: Shows wetness potential, with higher values (yellow-red) indicating wetter areas. Adjust slope and flow parameters for variability.")
             st.pyplot(fig)
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Curvature tab
     with tabs[9]:
@@ -680,6 +692,8 @@ with tabs[0]:
             )
             st.markdown("**Curvature Map**: Shows terrain curvature (positive=convex, negative=concave). Adjust DEM parameters to enhance variability.")
             st.pyplot(fig)
+        else:
+            st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Scenario GIFs tab
     with tabs[10]:
