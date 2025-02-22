@@ -258,15 +258,21 @@ if uploaded_stl and run_button:
                         burned_mask = (red > burn_threshold).astype(np.float32)
                         # Optionally, add color-based check for robustness
                         # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
+                        # Handle missing CRS or georeferencing
+                        if src.crs is None:
+                            st.warning("Burned area TIFF lacks CRS. Assuming EPSG:4326.")
+                            src_crs = "EPSG:4326"  # Default assumption
+                        else:
+                            src_crs = src.crs
                         # Resample burned_mask to match grid_z shape if necessary
-                        if burned_mask.shape != grid_z.shape:
-                            st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
-                            resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
+                        if burned_mask.shape != (grid_res, grid_res):
+                            st.write(f"Resampling burned_mask from {burned_mask.shape} to ({grid_res}, {grid_res})")
+                            resampled_mask = np.zeros((grid_res, grid_res), dtype=np.float32)
                             reproject(
                                 source=burned_mask,
                                 destination=resampled_mask,
                                 src_transform=src.transform,
-                                src_crs=src.crs,
+                                src_crs=src_crs,
                                 dst_transform=from_origin(left_bound, top_bound, dx, dy),
                                 dst_crs="EPSG:4326",
                                 resampling=Resampling.nearest
