@@ -246,18 +246,19 @@ if uploaded_stl and run_button:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
                 tmp_tif.write(uploaded_burned.read())
                 with rasterio.open(tmp_tif.name) as src:
-                    # If the TIFF does not have a CRS, set a default (e.g., EPSG:4326)
-                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     # Check if the TIFF has at least 3 bands (RGB)
                     if src.count < 3:
                         st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                     else:
+                        # Read all three bands: Red (1), Green (2), Blue (3)
                         red = src.read(1)
                         green = src.read(2)
                         blue = src.read(3)
-                        # Use a threshold (user-controlled) on the red channel
+                        # Detect burned areas (red regions: high red, low green/blue, using threshold)
                         burned_mask = (red > burn_threshold).astype(np.float32)
-                        # Resample burned_mask to match grid_z shape if needed
+                        # Optionally, add color-based check for robustness
+                        # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
+                        # Resample burned_mask to match grid_z shape if necessary
                         if burned_mask.shape != grid_z.shape:
                             st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
                             resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
@@ -265,7 +266,7 @@ if uploaded_stl and run_button:
                                 source=burned_mask,
                                 destination=resampled_mask,
                                 src_transform=src.transform,
-                                src_crs=src_crs,
+                                src_crs=src.crs,
                                 dst_transform=from_origin(left_bound, top_bound, dx, dy),
                                 dst_crs="EPSG:4326",
                                 resampling=Resampling.nearest
@@ -277,21 +278,26 @@ if uploaded_stl and run_button:
             burned_mask = None
 
     # Terrain derivatives (simplified)
-    flow_acc = np.ones_like(grid_z)  # Placeholder for flow accumulation
+    flow_acc = np.ones_like(grid_z)  # Placeholder
     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # Plotting with correct orientation and aspect ratio, including burned area overlay option
     def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=False, alpha=0.5):
         try:
+            # Plot the main data
             im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
+            # Overlay burned areas if requested and available
             if show_burned and burned_mask is not None:
                 if burned_mask.shape != data.shape:
-                    st.warning(f"Shape mismatch: Burned mask {burned_mask.shape} vs data {data.shape}. Skipping overlay.")
+                    st.warning(f"Shape mismatch: Burned mask ({burned_mask.shape}) does not match data ({data.shape}). Skipping overlay.")
                     return im
+                # Ensure burned_mask is binary (0 or 1)
                 burned_mask = burned_mask.astype(bool).astype(np.float32)
+                # Create a colormap for burned areas (red for 1, transparent for 0)
                 burned_cmap = ListedColormap(['none', 'red'])
                 ax.imshow(burned_mask, cmap=burned_cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), alpha=alpha)
+            # Set aspect ratio for geographical accuracy
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
@@ -301,23 +307,13 @@ if uploaded_stl and run_button:
             st.error(f"Error plotting with burned overlay: {e}")
             return None
 
-    # Helper: Create figure with consistent size based on spatial extents
-    def create_fig_ax():
-        spatial_width = right_bound - left_bound
-        spatial_height = top_bound - bottom_bound
-        aspect_ratio = spatial_height / spatial_width
-        base_width = 8
-        fig, ax = plt.subplots(figsize=(base_width, base_width * aspect_ratio))
-        return fig, ax
-
     with tabs[0]:  # DEM & Flow Simulation
         st.header("DEM & Flow Simulation")
         with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
-        fig, ax = create_fig_ax()
-        im = plot_with_burned_overlay(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max,
-                                      burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        fig, ax = plt.subplots()
+        im = plot_with_burned_overlay(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             step = max(1, grid_res // 20)
             ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
@@ -329,14 +325,15 @@ if uploaded_stl and run_button:
         st.header("Burned Areas")
         if burned_mask is not None:
             fig, ax = plt.subplots()
-            cmap = ListedColormap(['red', 'black'])
+            # Use origin='upper' to match your TIFF orientation
+            cmap = ListedColormap(['red', 'black'])  # 0 = Burned (red), 1 = Non-burned (black)
             im = ax.imshow(burned_mask, cmap=cmap, origin='upper', extent=(left_bound, right_bound, bottom_bound, top_bound))
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])
+            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])  # Reversed labels
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
@@ -349,9 +346,8 @@ if uploaded_stl and run_button:
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
-        fig, ax = create_fig_ax()
-        im = plot_with_burned_overlay(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax,
-                                      burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        fig, ax = plt.subplots()
+        im = plot_with_burned_overlay(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             st.pyplot(fig)
 
@@ -363,9 +359,8 @@ if uploaded_stl and run_button:
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
-        fig, ax = create_fig_ax()
-        im = plot_with_burned_overlay(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax,
-                                      burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        fig, ax = plt.subplots()
+        im = plot_with_burned_overlay(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             st.pyplot(fig)
 
@@ -388,7 +383,7 @@ if uploaded_stl and run_button:
         with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots()
         im = plot_with_burned_overlay(ax, flow_acc, 'Blues', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             st.pyplot(fig)
@@ -398,7 +393,7 @@ if uploaded_stl and run_button:
         with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots()
         im = plot_with_burned_overlay(ax, twi, 'RdYlBu', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             st.pyplot(fig)
@@ -408,7 +403,7 @@ if uploaded_stl and run_button:
         with st.expander("Visualization Options"):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots()
         im = plot_with_burned_overlay(ax, curvature, 'Spectral', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         if im is not None:
             st.pyplot(fig)
