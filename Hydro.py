@@ -138,9 +138,14 @@ tabs = st.tabs([
 ])
 
 # -----------------------------------------------------------------------------
-# 6. Georeference bounding box (EPSG:4326)
+# 6. Georeference bounding box (EPSG:4326) and constants
 # -----------------------------------------------------------------------------
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
+
+# Calculate meters per degree for aspect ratio (defined globally)
+avg_lat = (top_bound + bottom_bound) / 2.0
+meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
+meters_per_deg_lat = 111320
 
 # -----------------------------------------------------------------------------
 # 7. Parameter Inputs in "DEM & Flow Simulation" Tab
@@ -247,9 +252,6 @@ with tabs[0]:
                 # Derivatives
                 dx = (right_bound - left_bound) / (grid_res_val - 1)
                 dy = (top_bound - bottom_bound) / (grid_res_val - 1)
-                avg_lat = (top_bound + bottom_bound) / 2.0
-                meters_per_deg_lon = 111320 * np.cos(np.radians(avg_lat))
-                meters_per_deg_lat = 111320
                 dx_meters, dy_meters = dx * meters_per_deg_lon, dy * meters_per_deg_lat
                 dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
                 slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
@@ -267,10 +269,7 @@ with tabs[0]:
                                 else:
                                     band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
                                     band_data = src.read(band_index)
-                                    # Debug: Check the band data
-                                    st.write(f"Band data max: {np.max(band_data)}, min: {np.min(band_data)}")
                                     burned_mask = (band_data > burn_threshold_val).astype(np.float32)
-                                    st.write(f"Burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
 
                                     # Attempt reprojection if CRS is available
                                     src_crs = src.crs
@@ -290,12 +289,10 @@ with tabs[0]:
                                             resampling=Resampling.nearest
                                         )
                                         burned_mask = resampled_mask
-                                        st.write(f"Reprojected burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
                                     else:
                                         st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
                                         zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
                                         burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
-                                        st.write(f"Resized burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
 
                     except Exception as e:
                         st.error(f"Error processing burned area TIFF: {e}")
@@ -449,7 +446,7 @@ with tabs[0]:
         )
         st.pyplot(fig)
 
-        # Hydrograph plot (static for now, can be made dynamic if needed)
+        # Hydrograph plot
         st.subheader("Hydrograph")
         st.markdown("**Hydrograph**: Plots total flow (blue), unburned area flow (green), and burned area flow (red) over time (hr). Higher rainfall or runoff coefficients increase peak flows; adjust parameters to see impacts.")
         fig, ax = plt.subplots()
@@ -461,6 +458,9 @@ with tabs[0]:
         ax.set_ylabel("Flow Rate (m³/hr)")
         ax.legend()
         st.pyplot(fig)
+
+    else:
+        st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
     # Burned Areas tab
     with tabs[1]:
@@ -474,7 +474,7 @@ with tabs[0]:
                 fig, ax = plt.subplots()
                 cmap = ListedColormap(['red', 'black'])
                 im = ax.imshow(
-                    np.flipud(burned_mask), cmap=cmap, origin='upper',  # Flip to correct orientation
+                    np.flipud(burned_mask), cmap=cmap, origin='upper',
                     extent=(left_bound, right_bound, bottom_bound, top_bound)
                 )
                 st.markdown("**Burned Areas Map**: Red areas indicate burned regions (value=1), black areas are unburned (value=0). Adjust the threshold to capture more or fewer burned areas if the map is uniform.")
@@ -484,7 +484,7 @@ with tabs[0]:
                 ax.set_xlabel('Longitude (°E)')
                 ax.set_ylabel('Latitude (°N)')
                 cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-                cbar.ax.set_yticklabels(['Unburned', 'Burned'])  # Updated for clarity
+                cbar.ax.set_yticklabels(['Unburned', 'Burned'])
                 st.pyplot(fig)
             else:
                 st.write("No burned area data uploaded or TIFF processing failed.")
@@ -739,37 +739,18 @@ with tabs[0]:
         )
 
         if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
-            # Retrieve parameters for display logic
-            scale_val = st.session_state.get('scale', 1.0)
-            offset_val = st.session_state.get('offset', 0.0)
-            dem_min_val = st.session_state.get('dem_min', 0.0)
-            dem_max_val = st.session_state.get('dem_max', 500.0)
-            grid_res_val = st.session_state.get('grid_res', 500)
-            rainfall_val = st.session_state.get('rainfall', 30.0)
-            duration_val = st.session_state.get('duration', 2.0)
-            area_val = st.session_state.get('area', 10.0)
-            runoff_val = st.session_state.get('runoff', 0.5)
-            recession_val = st.session_state.get('recession', 0.5)
-            sim_hours_val = st.session_state.get('sim_hours', 6.0)
-            storage_val = st.session_state.get('storage', 5000.0)
-            burn_factor_val = st.session_state.get('burn_factor', 1.0)
-            burn_threshold_val = st.session_state.get('burn_threshold', 200)
-            band_to_threshold = st.session_state.get('band_threshold', "Red")
-            nutrient_val = st.session_state.get('nutrient', 50.0)
-            retention_val = st.session_state.get('retention', 0.7)
-            erosion_val = st.session_state.get('erosion', 0.3)
-            gif_frames_val = st.session_state.get('gif_frames', 10)
-            gif_fps_val = st.session_state.get('gif_fps', 2)
-
             grid_z = st.session_state.processed_data['grid_z']
             slope = st.session_state.processed_data['slope']
             burned_mask = st.session_state.processed_data['burned_mask']
+            V_runoff_unburned = st.session_state.processed_data['V_runoff_unburned']
+            V_runoff_burned = st.session_state.processed_data['V_runoff_burned']
+            V_runoff = st.session_state.processed_data['V_runoff']
 
             # Ensure shape compatibility
             if burned_mask.shape != grid_z.shape:
                 st.error(f"Burned mask shape {burned_mask.shape} does not match DEM shape {grid_z.shape}. Adjusting mask size.")
                 zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
-                burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
+                burned_mask = zoom(burned_mask, zoom_factors, order=0)
                 st.write(f"Adjusted burned mask shape: {burned_mask.shape}, mean: {np.mean(burned_mask)}")
 
             # Infiltration and Erosion Maps
@@ -779,23 +760,20 @@ with tabs[0]:
 
             erosion_map = np.full_like(grid_z, base_erosion_rate)
             erosion_map[burned_mask == 1] *= erosion_multiplier_burned
+            area_m2 = area_val * 10000.0
             area_per_cell_m2 = area_m2 / (grid_res_val * grid_res_val)
             total_erosion_unburned = np.sum(erosion_map[burned_mask == 0]) * (area_per_cell_m2 / 10000)
             total_erosion_burned = np.sum(erosion_map[burned_mask == 1]) * (area_per_cell_m2 / 10000)
             total_erosion = total_erosion_unburned + total_erosion_burned
 
             # Combined Effect Maps
-            # Runoff Potential Map: Higher slope and burned areas increase runoff
-            slope_normalized = slope / np.max(slope, initial=0.1)  # Avoid division by zero, ensure variability
-            runoff_potential = runoff_val * (1 + slope_normalized)  # Base runoff scaled by normalized slope
-            runoff_potential[burned_mask == 1] *= (1 + burn_factor_val)  # Increase in burned areas
-            runoff_potential = np.clip(runoff_potential, 0, 1)  # Ensure within [0, 1]
-            st.write(f"Runoff potential max: {np.max(runoff_potential)}, min: {np.min(runoff_potential)}")
+            slope_normalized = slope / np.max(slope, initial=0.1)
+            runoff_potential = runoff_val * (1 + slope_normalized)
+            runoff_potential[burned_mask == 1] *= (1 + burn_factor_val)
+            runoff_potential = np.clip(runoff_potential, 0, 1)
 
-            # Erosion Risk Map: Higher slope and burned areas increase erosion risk
-            erosion_risk = base_erosion_rate * (1 + slope_normalized)  # Base erosion scaled by normalized slope
-            erosion_risk[burned_mask == 1] *= erosion_multiplier_burned  # Increase in burned areas
-            st.write(f"Erosion risk max: {np.max(erosion_risk)}, min: {np.min(erosion_risk)}")
+            erosion_risk = base_erosion_rate * (1 + slope_normalized)
+            erosion_risk[burned_mask == 1] *= erosion_multiplier_burned
 
             # Display statistics
             st.write(f"**Runoff from Unburned Areas:** {V_runoff_unburned:.2f} m³")
@@ -810,7 +788,7 @@ with tabs[0]:
             st.markdown("**Infiltration Map**: Shows infiltration rates (mm/hr) across the terrain, with lower values in burned areas (green). Adjust 'Base Infiltration Rate' and 'Infiltration Reduction' to see changes in runoff potential.")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                np.flipud(infiltration_map), cmap='Greens', origin='upper',  # Flip for correct orientation
+                np.flipud(infiltration_map), cmap='Greens', origin='upper',
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
@@ -825,7 +803,7 @@ with tabs[0]:
             st.markdown("**Erosion Map**: Shows erosion rates (tons/ha), with higher values in burned and steeper areas (red-orange). Adjust 'Base Erosion Rate' and 'Erosion Multiplier' to increase variability.")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                np.flipud(erosion_map), cmap='OrRd', origin='upper',  # Flip for correct orientation
+                np.flipud(erosion_map), cmap='OrRd', origin='upper',
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             ax.set_aspect(aspect_ratio)
@@ -836,10 +814,10 @@ with tabs[0]:
 
             # Runoff Potential Map
             st.subheader("Runoff Potential Map (Normalized)")
-            st.markdown("**Runoff Potential Map**: Shows normalized runoff potential (0–1, blue), combining slope and burned areas. Higher values (darker blue) indicate greater runoff likelihood in steeper, burned regions. If blank or uniform, adjust 'Runoff Coefficient,' 'Runoff Increase Factor,' 'Burned Area Threshold,' or check the STL for slope variability and TIFF for burned areas.")
+            st.markdown("**Runoff Potential Map**: Shows normalized runoff potential (0–1, blue), combining slope and burned areas. Higher values (darker blue) indicate greater runoff likelihood in steeper, burned regions.")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                np.flipud(runoff_potential), cmap='Blues', origin='upper',  # Flip for correct orientation
+                np.flipud(runoff_potential), cmap='Blues', origin='upper',
                 extent=(left_bound, right_bound, bottom_bound, top_bound),
                 vmin=0, vmax=1
             )
@@ -851,10 +829,10 @@ with tabs[0]:
 
             # Erosion Risk Map
             st.subheader("Erosion Risk Map (tons/ha)")
-            st.markdown("**Erosion Risk Map**: Shows erosion risk (tons/ha, yellow-orange-red), combining slope and burned areas. Higher values (redder) indicate greater risk in steeper, burned regions. If uniform, adjust 'Base Erosion Rate,' 'Erosion Multiplier,' 'Burned Area Threshold,' or verify STL and TIFF data.")
+            st.markdown("**Erosion Risk Map**: Shows erosion risk (tons/ha, yellow-orange-red), combining slope and burned areas. Higher values (redder) indicate greater risk in steeper, burned regions.")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                np.flipud(erosion_risk), cmap='YlOrRd', origin='upper',  # Flip for correct orientation
+                np.flipud(erosion_risk), cmap='YlOrRd', origin='upper',
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             ax.set_aspect(aspect_ratio)
@@ -871,7 +849,6 @@ with tabs[0]:
             - Verify the STL file has varied terrain (slope) and the TIFF shows burned areas for spatial variation.  
             """)
         else:
-            st.write(f"**Total Runoff:** {V_runoff:.2f} m³")
             st.warning("No burned area detected or TIFF missing. Upload a valid burned-area TIFF and adjust the 'Burned Area Threshold' to detect burned regions.")
 
     # Parameter Comparison Tab
@@ -881,28 +858,6 @@ with tabs[0]:
         st.markdown("**Instructions**: If no comparison appears, ensure a burned-area TIFF is uploaded and shows variation. Adjust parameters in other tabs to enhance differences.")
         
         if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
-            # Retrieve parameters for display logic
-            scale_val = st.session_state.get('scale', 1.0)
-            offset_val = st.session_state.get('offset', 0.0)
-            dem_min_val = st.session_state.get('dem_min', 0.0)
-            dem_max_val = st.session_state.get('dem_max', 500.0)
-            grid_res_val = st.session_state.get('grid_res', 500)
-            rainfall_val = st.session_state.get('rainfall', 30.0)
-            duration_val = st.session_state.get('duration', 2.0)
-            area_val = st.session_state.get('area', 10.0)
-            runoff_val = st.session_state.get('runoff', 0.5)
-            recession_val = st.session_state.get('recession', 0.5)
-            sim_hours_val = st.session_state.get('sim_hours', 6.0)
-            storage_val = st.session_state.get('storage', 5000.0)
-            burn_factor_val = st.session_state.get('burn_factor', 1.0)
-            burn_threshold_val = st.session_state.get('burn_threshold', 200)
-            band_to_threshold = st.session_state.get('band_threshold', "Red")
-            nutrient_val = st.session_state.get('nutrient', 50.0)
-            retention_val = st.session_state.get('retention', 0.7)
-            erosion_val = st.session_state.get('erosion', 0.3)
-            gif_frames_val = st.session_state.get('gif_frames', 10)
-            gif_fps_val = st.session_state.get('gif_fps', 2)
-
             grid_z = st.session_state.processed_data['grid_z']
             slope = st.session_state.processed_data['slope']
             aspect = st.session_state.processed_data['aspect']
@@ -941,18 +896,17 @@ with tabs[0]:
                 st.write("No data available for comparison. Ensure burned areas are detected in the TIFF.")
         else:
             st.write("No burned area data available for comparison. Upload a valid burned-area TIFF.")
-        else:
-    st.info("Please upload an STL file and click 'Run Analysis' to begin.")
 
+# -----------------------------------------------------------------------------
 # Helper function for plotting with burned area overlay
+# -----------------------------------------------------------------------------
 def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
                             burned_mask=None, show_burned=True, alpha=0.5):
-    # Flip data vertically to correct orientation (north up)
     data = np.flipud(data)
     if burned_mask is not None and show_burned:
         burned_mask = np.flipud(burned_mask)
     
-    im = ax.imshow(data, cmap=cmap, origin='upper',  # Changed to 'upper' for correct orientation
+    im = ax.imshow(data, cmap=cmap, origin='upper',
                    extent=(left_bound, right_bound, bottom_bound, top_bound),
                    vmin=vmin, vmax=vmax)
     if show_burned and burned_mask is not None:
