@@ -189,13 +189,16 @@ def flow_direction_d8(dem):
     return flow_dir
 
 def flow_accumulation(flow_dir):
-    """Calculate flow accumulation using D8 flow directions."""
+    """Calculate flow accumulation using D8 flow directions with limited iterations."""
     rows, cols = flow_dir.shape
-    accum = np.ones_like(flow_dir, dtype=np.float32)
-    for _ in range(rows * cols):  # Iterate to propagate flow
+    accum = np.ones_like(flow_dir, dtype=np.float64)  # Use float64 to avoid overflow
+    max_iterations = min(rows, cols) * 2  # Limit iterations to twice the smaller dimension
+    for _ in range(max_iterations):
+        changed = False
         for i in range(1, rows - 1):
             for j in range(1, cols - 1):
                 if flow_dir[i, j] != 0:
+                    old_value = accum[i, j]
                     if flow_dir[i, j] == 1:
                         accum[i-1, j-1] += accum[i, j]
                     elif flow_dir[i, j] == 2:
@@ -212,6 +215,10 @@ def flow_accumulation(flow_dir):
                         accum[i+1, j-1] += accum[i, j]
                     elif flow_dir[i, j] == 8:
                         accum[i, j-1] += accum[i, j]
+                    if not changed and accum[i, j] != old_value:
+                        changed = True
+        if not changed:  # Early stopping if no changes
+            break
     return accum
 
 # -----------------------------------------------------------------------------
@@ -277,7 +284,7 @@ with tabs[0]:
         else:
             with st.spinner("Running analysis..."):
                 try:
-                    st.session_state.processed_data = {}  # Clear previous data
+                    st.session_state.processed_data = {}  # Initialize as empty dict
                     # Retrieve parameters from session state
                     scale_val = st.session_state.get('scale', 1.0)
                     offset_val = st.session_state.get('offset', 0.0)
@@ -304,6 +311,7 @@ with tabs[0]:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
                         tmp_stl.write(uploaded_stl.read())
                         stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
+                    st.write("STL file loaded successfully.")
 
                     vertices = stl_mesh.vectors.reshape(-1, 3)
                     x_raw, y_raw, z_raw = vertices[:, 0], vertices[:, 1], vertices[:, 2]
@@ -315,10 +323,11 @@ with tabs[0]:
                     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
                     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
                     xi = np.linspace(left_bound, right_bound, grid_res_val)
-                    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Changed custom_bound to bottom_bound
+                    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Fixed custom_bound to bottom_bound
                     grid_x, grid_y = np.meshgrid(xi, yi)
                     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
                     grid_z = np.clip(grid_z, dem_min_val, dem_max_val)
+                    st.write("DEM interpolation completed.")
 
                     # Derivatives
                     dx = (right_bound - left_bound) / (grid_res_val - 1)
@@ -327,53 +336,52 @@ with tabs[0]:
                     dz_dx, dz_dy = np.gradient(grid_z, dx_meters, dy_meters)
                     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
                     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
+                    st.write("Slope and aspect calculated.")
 
                     # Burned area detection
                     burned_mask = None
                     if uploaded_burned:
-                        try:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
-                                tmp_tif.write(uploaded_burned.read())
-                                with rasterio.open(tmp_tif.name) as src:
-                                    if src.count < 3:
-                                        st.warning("The burned area TIFF must be an RGB image with 3 bands.")
-                                    else:
-                                        band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
-                                        band_data = src.read(band_index)
-                                        burned_mask = (band_data > burn_threshold_val).astype(np.float32)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
+                            tmp_tif.write(uploaded_burned.read())
+                            with rasterio.open(tmp_tif.name) as src:
+                                if src.count < 3:
+                                    st.warning("The burned area TIFF must be an RGB image with 3 bands.")
+                                else:
+                                    band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
+                                    band_data = src.read(band_index)
+                                    burned_mask = (band_data > burn_threshold_val).astype(np.float32)
 
-                                        # Attempt reprojection if CRS is available
-                                        src_crs = src.crs
-                                        if src_crs:
-                                            src_transform = src.transform
-                                            target_transform = from_origin(left_bound, top_bound, dx, dy)
-                                            target_crs = 'EPSG:4326'
-                                            target_shape = grid_z.shape
-                                            resampled_mask = np.empty(target_shape, dtype=np.float32)
-                                            reproject(
-                                                source=burned_mask,
-                                                destination=resampled_mask,
-                                                src_transform=src_transform,
-                                                src_crs=src_crs,
-                                                dst_transform=target_transform,
-                                                dst_crs=target_crs,
-                                                resampling=Resampling.nearest
-                                            )
-                                            burned_mask = resampled_mask
-                                        else:
-                                            st.warning("TIFF has no CRS. Resizing mask to match DEM shape.")
-                                            zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
-                                            burned_mask = zoom(burned_mask, zoom_factors, order=0)
-                        except Exception as e:
-                            st.error(f"Error processing TIFF: {e}")
-                            burned_mask = None
+                                    src_crs = src.crs
+                                    if src_crs:
+                                        src_transform = src.transform
+                                        target_transform = from_origin(left_bound, top_bound, dx, dy)
+                                        target_crs = 'EPSG:4326'
+                                        target_shape = grid_z.shape
+                                        resampled_mask = np.empty(target_shape, dtype=np.float32)
+                                        reproject(
+                                            source=burned_mask,
+                                            destination=resampled_mask,
+                                            src_transform=src_transform,
+                                            src_crs=src_crs,
+                                            dst_transform=target_transform,
+                                            dst_crs=target_crs,
+                                            resampling=Resampling.nearest
+                                        )
+                                        burned_mask = resampled_mask
+                                    else:
+                                        st.warning("TIFF has no CRS. Resizing mask.")
+                                        zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
+                                        burned_mask = zoom(burned_mask, zoom_factors, order=0)
+                        st.write("Burned area mask processed.")
 
                     # Flow Direction and Accumulation
                     flow_dir = flow_direction_d8(grid_z)
                     flow_acc = flow_accumulation(flow_dir)
+                    st.write("Flow accumulation calculated.")
 
                     # Enhanced TWI Calculation
                     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.001))
+                    st.write("TWI calculated.")
 
                     # SCS-CN Method for Runoff
                     base_cn = 70  # Base curve number for unburned areas
@@ -390,9 +398,11 @@ with tabs[0]:
                     )
                     area_per_cell_m2 = dx_meters * dy_meters  # Area per grid cell in m²
                     runoff_volume_spatial = runoff_depth * area_per_cell_m2
+                    st.write("Runoff depth and volume calculated.")
 
                     # Curvature Calculation
                     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
+                    st.write("Curvature calculated.")
 
                     # Store processed data in session state
                     st.session_state.processed_data = {
@@ -426,69 +436,73 @@ with tabs[0]:
     # Display results if processed data exists
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         processed_data = st.session_state.processed_data
-        grid_z = processed_data['grid_z']
-        slope = processed_data['slope']
-        aspect = processed_data['aspect']
-        burned_mask = processed_data['burned_mask']
-        flow_acc = processed_data['flow_acc']
-        twi = processed_data['twi']
-        runoff_depth = processed_data['runoff_depth']
-        runoff_volume_spatial = processed_data['runoff_volume_spatial']
-        grid_x = processed_data['grid_x']
-        grid_y = processed_data['grid_y']
-        dz_dx = processed_data['dz_dx']
-        dz_dy = processed_data['dz_dy']
-        dem_min_val = processed_data['dem_min_val']
-        dem_max_val = processed_data['dem_max_val']
-        rainfall_val = processed_data['rainfall_val']
-        area_val = processed_data['area_val']
-        burn_factor_val = processed_data['burn_factor_val']
-        base_cn = processed_data['base_cn']
-        burned_cn = processed_data['burned_cn']
-        curvature = processed_data['curvature']
+        grid_z = processed_data.get('grid_z')
+        slope = processed_data.get('slope')
+        aspect = processed_data.get('aspect')
+        burned_mask = processed_data.get('burned_mask')
+        flow_acc = processed_data.get('flow_acc')
+        twi = processed_data.get('twi')
+        runoff_depth = processed_data.get('runoff_depth')
+        runoff_volume_spatial = processed_data.get('runoff_volume_spatial')
+        grid_x = processed_data.get('grid_x')
+        grid_y = processed_data.get('grid_y')
+        dz_dx = processed_data.get('dz_dx')
+        dz_dy = processed_data.get('dz_dy')
+        dem_min_val = processed_data.get('dem_min_val', 0.0)
+        dem_max_val = processed_data.get('dem_max_val', 500.0)
+        rainfall_val = processed_data.get('rainfall_val', 30.0)
+        area_val = processed_data.get('area_val', 10.0)
+        burn_factor_val = processed_data.get('burn_factor_val', 1.0)
+        base_cn = processed_data.get('base_cn', 70)
+        burned_cn = processed_data.get('burned_cn', 90)
+        curvature = processed_data.get('curvature')
 
         st.markdown("### DEM Visualization")
         with st.expander("Visualization Options", expanded=True):
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
 
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, grid_z, 'terrain',
-            vmin=dem_min_val, vmax=dem_max_val,
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if grid_z is not None:
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, grid_z, 'terrain',
+                vmin=dem_min_val, vmax=dem_max_val,
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
 
-        st.subheader("Flow Accumulation Map")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(flow_acc), cmap='Blues', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="Flow Accumulation")
-        st.pyplot(fig)
+        if flow_acc is not None:
+            st.subheader("Flow Accumulation Map")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(flow_acc), cmap='Blues', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Flow Accumulation")
+            st.pyplot(fig)
 
-        st.subheader("Topographic Wetness Index (TWI) Map")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(twi), cmap='RdYlBu', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="TWI")
-        st.pyplot(fig)
+        if twi is not None:
+            st.subheader("Topographic Wetness Index (TWI) Map")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(twi), cmap='RdYlBu', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="TWI")
+            st.pyplot(fig)
 
-        st.subheader("Runoff Depth Map (m)")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(runoff_depth), cmap='Blues', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="Runoff Depth (m)")
-        st.pyplot(fig)
+        if runoff_depth is not None:
+            st.subheader("Runoff Depth Map (m)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(runoff_depth), cmap='Blues', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Runoff Depth (m)")
+            st.pyplot(fig)
     else:
         st.write("No data processed. Please upload an STL file and click 'Run Analysis'.")
 
@@ -525,21 +539,22 @@ with tabs[2]:
     st.markdown("### This tab displays the slope of the terrain derived from the DEM.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        slope = st.session_state.processed_data['slope']
+        slope = st.session_state.processed_data.get('slope')
         burned_mask = st.session_state.processed_data.get('burned_mask')
-        with st.expander("Visualization Options", expanded=True):
-            slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
-            slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
-            slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
-        
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax,
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if slope is not None:
+            with st.expander("Visualization Options", expanded=True):
+                slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
+                slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
+                slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
+                show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
+                burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
+            
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax,
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
     else:
         st.write("No data processed.")
 
@@ -551,21 +566,22 @@ with tabs[3]:
     st.markdown("### This tab displays the aspect (direction) of the terrain derived from the DEM.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        aspect = st.session_state.processed_data['aspect']
+        aspect = st.session_state.processed_data.get('aspect')
         burned_mask = st.session_state.processed_data.get('burned_mask')
-        with st.expander("Visualization Options", expanded=True):
-            aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
-            aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
-            aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
-        
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax,
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if aspect is not None:
+            with st.expander("Visualization Options", expanded=True):
+                aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
+                aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
+                aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
+                show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
+                burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
+            
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax,
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
     else:
         st.write("No data processed.")
 
@@ -617,18 +633,19 @@ with tabs[7]:
     st.markdown("### This tab shows accumulated flow across the terrain.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        flow_acc = st.session_state.processed_data['flow_acc']
+        flow_acc = st.session_state.processed_data.get('flow_acc')
         burned_mask = st.session_state.processed_data.get('burned_mask')
-        with st.expander("Visualization Options", expanded=True):
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
-        
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, flow_acc, 'Blues',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if flow_acc is not None:
+            with st.expander("Visualization Options", expanded=True):
+                show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
+                burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
+            
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, flow_acc, 'Blues',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
     else:
         st.write("No data processed.")
 
@@ -640,18 +657,19 @@ with tabs[8]:
     st.markdown("### This tab shows areas prone to saturation based on terrain.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        twi = st.session_state.processed_data['twi']
+        twi = st.session_state.processed_data.get('twi')
         burned_mask = st.session_state.processed_data.get('burned_mask')
-        with st.expander("Visualization Options", expanded=True):
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
-        
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, twi, 'RdYlBu',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if twi is not None:
+            with st.expander("Visualization Options", expanded=True):
+                show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
+                burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
+            
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, twi, 'RdYlBu',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
     else:
         st.write("No data processed.")
 
@@ -663,18 +681,19 @@ with tabs[9]:
     st.markdown("### This tab analyzes terrain curvature from the DEM.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        curvature = st.session_state.processed_data['curvature']
+        curvature = st.session_state.processed_data.get('curvature')
         burned_mask = st.session_state.processed_data.get('burned_mask')
-        with st.expander("Visualization Options", expanded=True):
-            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
-            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
-        
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, curvature, 'Spectral',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.pyplot(fig)
+        if curvature is not None:
+            with st.expander("Visualization Options", expanded=True):
+                show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
+                burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
+            
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, curvature, 'Spectral',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.pyplot(fig)
     else:
         st.write("No data processed.")
 
@@ -693,74 +712,79 @@ with tabs[11]:
     st.markdown("### This tab analyzes how burned areas affect hydrology.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        grid_z = st.session_state.processed_data['grid_z']
-        slope = st.session_state.processed_data['slope']
-        burned_mask = st.session_state.processed_data['burned_mask']
-        runoff_depth = st.session_state.processed_data['runoff_depth']
-        rainfall_val = st.session_state.processed_data['rainfall_val']
-        burn_factor_val = st.session_state.processed_data['burn_factor_val']
-        base_cn = st.session_state.processed_data['base_cn']
-        burned_cn = st.session_state.processed_data['burned_cn']
+        grid_z = st.session_state.processed_data.get('grid_z')
+        slope = st.session_state.processed_data.get('slope')
+        burned_mask = st.session_state.processed_data.get('burned_mask')
+        runoff_depth = st.session_state.processed_data.get('runoff_depth')
+        rainfall_val = st.session_state.processed_data.get('rainfall_val', 30.0)
+        burn_factor_val = st.session_state.processed_data.get('burn_factor_val', 1.0)
+        base_cn = st.session_state.processed_data.get('base_cn', 70)
+        burned_cn = st.session_state.processed_data.get('burned_cn', 90)
 
-        # Scenario Analysis
-        st.subheader("Scenario Analysis")
-        burn_factor_scenario = st.slider("Burn Factor for Scenario", 0.0, 2.0, 1.0, 0.1)
-        erosion_multiplier_scenario = st.slider("Erosion Multiplier for Scenario", 1.0, 5.0, 2.0, 0.1)
+        if grid_z is not None and slope is not None and runoff_depth is not None:
+            # Scenario Analysis
+            st.subheader("Scenario Analysis")
+            burn_factor_scenario = st.slider("Burn Factor for Scenario", 0.0, 2.0, 1.0, 0.1)
+            erosion_multiplier_scenario = st.slider("Erosion Multiplier for Scenario", 1.0, 5.0, 2.0, 0.1)
 
-        # Runoff Potential with and without Burned Areas
-        runoff_potential_with_burned = runoff_depth / (rainfall_val / 1000)
-        S_unburned = (25400 / base_cn) - 254
-        runoff_depth_without_burned = np.where(
-            rainfall_val / 1000 > 0.2 * S_unburned,
-            ((rainfall_val / 1000) - 0.2 * S_unburned)**2 / ((rainfall_val / 1000) + 0.8 * S_unburned),
-            0
-        )
-        runoff_potential_without_burned = runoff_depth_without_burned / (rainfall_val / 1000)
-        runoff_potential_difference = runoff_potential_with_burned - runoff_potential_without_burned
+            # Runoff Potential with and without Burned Areas
+            runoff_potential_with_burned = runoff_depth / (rainfall_val / 1000)
+            S_unburned = (25400 / base_cn) - 254
+            runoff_depth_without_burned = np.where(
+                rainfall_val / 1000 > 0.2 * S_unburned,
+                ((rainfall_val / 1000) - 0.2 * S_unburned)**2 / ((rainfall_val / 1000) + 0.8 * S_unburned),
+                0
+            )
+            runoff_potential_without_burned = runoff_depth_without_burned / (rainfall_val / 1000)
+            runoff_potential_difference = runoff_potential_with_burned - runoff_potential_without_burned
 
-        # Scenario-based Runoff Potential
-        runoff_potential_scenario = runoff_depth / (rainfall_val / 1000)
-        runoff_potential_scenario[burned_mask == 1] *= (1 + burn_factor_scenario)
-        runoff_potential_scenario = np.clip(runoff_potential_scenario, 0, 1)
+            # Scenario-based Runoff Potential
+            runoff_potential_scenario = runoff_depth / (rainfall_val / 1000)
+            if burned_mask is not None:
+                runoff_potential_scenario[burned_mask == 1] *= (1 + burn_factor_scenario)
+            runoff_potential_scenario = np.clip(runoff_potential_scenario, 0, 1)
 
-        # Scenario-based Erosion Risk
-        base_erosion_rate = 0.1  # Example value in tons/ha
-        slope_normalized = (slope - np.min(slope)) / (np.max(slope) - np.min(slope))
-        erosion_risk_scenario = base_erosion_rate * (1 + slope_normalized)
-        erosion_risk_scenario[burned_mask == 1] *= erosion_multiplier_scenario
+            # Scenario-based Erosion Risk
+            base_erosion_rate = 0.1  # Example value in tons/ha
+            slope_normalized = (slope - np.min(slope)) / (np.max(slope) - np.min(slope))
+            erosion_risk_scenario = base_erosion_rate * (1 + slope_normalized)
+            if burned_mask is not None:
+                erosion_risk_scenario[burned_mask == 1] *= erosion_multiplier_scenario
 
-        # Runoff Potential Difference Map
-        st.subheader("Runoff Potential Difference Map")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(runoff_potential_difference), cmap='coolwarm', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="Runoff Potential Difference")
-        st.pyplot(fig)
+            # Runoff Potential Difference Map
+            st.subheader("Runoff Potential Difference Map")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(runoff_potential_difference), cmap='coolwarm', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Runoff Potential Difference")
+            st.pyplot(fig)
 
-        # Scenario Maps
-        st.subheader("Runoff Potential Map (Scenario)")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(runoff_potential_scenario), cmap='Blues', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       vmin=0, vmax=1)
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="Runoff Potential (0-1)")
-        st.pyplot(fig)
+            # Scenario Maps
+            st.subheader("Runoff Potential Map (Scenario)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(runoff_potential_scenario), cmap='Blues', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound),
+                           vmin=0, vmax=1)
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Runoff Potential (0-1)")
+            st.pyplot(fig)
 
-        st.subheader("Erosion Risk Map (Scenario)")
-        fig, ax = plt.subplots()
-        im = ax.imshow(np.flipud(erosion_risk_scenario), cmap='YlOrRd', origin='upper',
-                       extent=(left_bound, right_bound, bottom_bound, top_bound))
-        ax.set_aspect('equal')
-        ax.set_xlabel('Longitude (°E)')
-        ax.set_ylabel('Latitude (°N)')
-        fig.colorbar(im, ax=ax, label="Erosion Risk (tons/ha)")
-        st.pyplot(fig)
+            st.subheader("Erosion Risk Map (Scenario)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(np.flipud(erosion_risk_scenario), cmap='YlOrRd', origin='upper',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            ax.set_aspect('equal')
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Erosion Risk (tons/ha)")
+            st.pyplot(fig)
+        else:
+            st.write("Required data (grid_z, slope, runoff_depth) not available for scenario analysis.")
     else:
         st.write("No data processed.")
 
@@ -772,13 +796,13 @@ with tabs[12]:
     st.markdown("### This tab compares hydrological parameters between burned and unburned areas.")
     
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data.get('burned_mask') is not None:
-        grid_z = st.session_state.processed_data['grid_z']
-        slope = st.session_state.processed_data['slope']
-        aspect = st.session_state.processed_data['aspect']
-        flow_acc = st.session_state.processed_data['flow_acc']
-        twi = st.session_state.processed_data['twi']
-        curvature = st.session_state.processed_data['curvature']
-        burned_mask = st.session_state.processed_data['burned_mask']
+        grid_z = st.session_state.processed_data.get('grid_z')
+        slope = st.session_state.processed_data.get('slope')
+        aspect = st.session_state.processed_data.get('aspect')
+        flow_acc = st.session_state.processed_data.get('flow_acc')
+        twi = st.session_state.processed_data.get('twi')
+        curvature = st.session_state.processed_data.get('curvature')
+        burned_mask = st.session_state.processed_data.get('burned_mask')
 
         params = {
             "Elevation (m)": grid_z,
@@ -790,17 +814,18 @@ with tabs[12]:
         }
         comparison_data = {}
         for param_name, param_data in params.items():
-            burned_data = param_data[burned_mask == 1]
-            unburned_data = param_data[burned_mask == 0]
-            if len(burned_data) > 0 and len(unburned_data) > 0:
-                comparison_data[param_name] = {
-                    "Burned Mean": np.mean(burned_data),
-                    "Unburned Mean": np.mean(unburned_data),
-                    "Burned Median": np.median(burned_data),
-                    "Unburned Median": np.median(unburned_data),
-                    "Burned Std": np.std(burned_data),
-                    "Unburned Std": np.std(unburned_data)
-                }
+            if param_data is not None:
+                burned_data = param_data[burned_mask == 1]
+                unburned_data = param_data[burned_mask == 0]
+                if len(burned_data) > 0 and len(unburned_data) > 0:
+                    comparison_data[param_name] = {
+                        "Burned Mean": np.mean(burned_data),
+                        "Unburned Mean": np.mean(unburned_data),
+                        "Burned Median": np.median(burned_data),
+                        "Unburned Median": np.median(unburned_data),
+                        "Burned Std": np.std(burned_data),
+                        "Unburned Std": np.std(unburned_data)
+                    }
         if comparison_data:
             df = pd.DataFrame(comparison_data).T
             st.write("**Statistical Comparison of Parameters**")
