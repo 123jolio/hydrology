@@ -192,9 +192,6 @@ with tabs[10]:
 # 10. Processing and Display Logic
 # -----------------------------------------------------------------------------
 if uploaded_stl and run_button:
-    # Save uploaded STL bytes for DEM processing and 3D viewing
-    stl_bytes = uploaded_stl.getvalue()
-    
     # Retrieve parameters
     scale_val = st.session_state.scale
     offset_val = st.session_state.offset
@@ -216,9 +213,9 @@ if uploaded_stl and run_button:
     gif_frames_val = st.session_state.gif_frames
     gif_fps_val = st.session_state.gif_fps
 
-    # Load and process STL file for DEM
+    # Load and process STL file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
-        tmp_stl.write(stl_bytes)
+        tmp_stl.write(uploaded_stl.read())
         stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
     vertices = stl_mesh.vectors.reshape(-1, 3)
     x_raw, y_raw, z_raw = vertices[:, 0], vertices[:, 1], vertices[:, 2]
@@ -263,21 +260,19 @@ if uploaded_stl and run_button:
     # Nutrient leaching
     nutrient_load = nutrient_val * (1 - retention_val) * erosion_val * area_val
 
-    # Burned area processing using the red channel threshold (RGB TIFF)
+    # Burned area processing for RGB TIFF with color-based detection
     burned_mask = None
     if uploaded_burned:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
                 tmp_tif.write(uploaded_burned.read())
                 with rasterio.open(tmp_tif.name) as src:
+                    src_crs = src.crs if src.crs is not None else "EPSG:4326"
                     if src.count < 3:
                         st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                     else:
-                        # Read the red channel
                         red = src.read(1)
                         burned_mask = (red > burn_threshold_val).astype(np.float32)
-                        burned_mask[burned_mask > 0] = 1
-                        # If the burned mask shape doesn't match the DEM, reproject it
                         if burned_mask.shape != grid_z.shape:
                             st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
                             resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
@@ -285,15 +280,13 @@ if uploaded_stl and run_button:
                                 source=burned_mask,
                                 destination=resampled_mask,
                                 src_transform=src.transform,
-                                src_crs=src.crs if src.crs is not None else "EPSG:4326",
+                                src_crs=src_crs,
                                 dst_transform=from_origin(left_bound, top_bound, dx, dy),
                                 dst_crs="EPSG:4326",
                                 resampling=Resampling.nearest
                             )
                             burned_mask = resampled_mask
                             st.write(f"Burned mask resampled to {burned_mask.shape}")
-                        # Flip vertically to correct orientation (since the TIFF origin is top-left)
-                        burned_mask = np.flipud(burned_mask)
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
             burned_mask = None
@@ -306,14 +299,12 @@ if uploaded_stl and run_button:
     # -----------------------------------------------------------------------------
     # Helper: Plotting Function with Burned Overlay
     # -----------------------------------------------------------------------------
-    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
-                                 burned_mask=None, show_burned=True, alpha=0.5):
+    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
         im = ax.imshow(data, cmap=cmap, origin='lower',
                        extent=(left_bound, right_bound, bottom_bound, top_bound),
                        vmin=vmin, vmax=vmax)
         if show_burned and (burned_mask is not None):
-            # Use an RGBA colormap: transparent for 0 and red for burned areas (1)
-            burned_cmap = ListedColormap([(0, 0, 0, 0), 'red'])
+            burned_cmap = ListedColormap(['none', 'red'])
             ax.imshow(burned_mask, cmap=burned_cmap, origin='lower',
                       extent=(left_bound, right_bound, bottom_bound, top_bound),
                       alpha=alpha)
@@ -354,8 +345,7 @@ if uploaded_stl and run_button:
         st.header("Burned Areas")
         if burned_mask is not None:
             fig, ax = plt.subplots()
-            # Reverse colormap order so that value 1 is red (burned) and 0 is black (non-burned)
-            cmap_burn = ListedColormap(['black', 'red'])
+            cmap_burn = ListedColormap(['red', 'black'])
             im = ax.imshow(burned_mask, cmap=cmap_burn, origin='upper',
                            extent=(left_bound, right_bound, bottom_bound, top_bound))
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
@@ -363,7 +353,7 @@ if uploaded_stl and run_button:
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
+            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
@@ -451,8 +441,8 @@ if uploaded_stl and run_button:
         st.header("Burned-Area Hydro Impacts")
         st.markdown("""
         **Hydrogeologic Impacts of Burned Areas**  
-        - **Reduced Infiltration**: Burned areas often become hydrophobic, reducing infiltration and increasing surface runoff.  
-        - **Accelerated Erosion**: Lack of vegetation increases soil erosion and sediment yield.  
+        - **Reduced Infiltration**: Burned areas tend to become hydrophobic, reducing infiltration and increasing surface runoff.  
+        - **Accelerated Erosion**: Loss of vegetation increases soil erosion and sediment yield.  
         - **Decreased Groundwater Recharge**: Lower infiltration can reduce aquifer recharge.  
         - **Water Quality Impacts**: Increased runoff can carry ash and nutrients into waterways.
         """)
@@ -495,17 +485,17 @@ if uploaded_stl and run_button:
         else:
             st.warning("No burned area detected. Please upload a valid burned-area TIFF.")
 
-    # 3D STL Viewer Tab using Plotly Mesh3d
+    # 3D STL Viewer Tab using Plotly
     with tabs[12]:
         st.header("3D STL Viewer")
-        if stl_bytes is not None:
+        if uploaded_stl:
             try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_3d:
-                    tmp_3d.write(stl_bytes)
-                    stl_path = tmp_3d.name
-                stl_mesh_3d = mesh.Mesh.from_file(stl_path)
+                # Load STL from the file buffer again (or reuse from earlier)
+                uploaded_stl.seek(0)
+                stl_mesh_3d = mesh.Mesh.from_file(uploaded_stl)
                 vertices = stl_mesh_3d.vectors.reshape(-1, 3)
                 n_triangles = len(stl_mesh_3d.vectors)
+                # Create faces: each triangle has 3 vertices.
                 faces = np.array([[3*i, 3*i+1, 3*i+2] for i in range(n_triangles)])
                 fig = go.Figure(data=[
                     go.Mesh3d(
@@ -524,7 +514,7 @@ if uploaded_stl and run_button:
             except Exception as e:
                 st.error(f"Error displaying 3D STL: {e}")
         else:
-            st.write("No STL file available.")
-            
+            st.write("No STL file uploaded.")
+
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
