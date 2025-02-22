@@ -95,6 +95,9 @@ st.markdown("""
         background-color: #333333;
         color: #E0E0E0;
     }
+    .stCheckbox > div > label {
+        color: #E0E0E0;
+    }
     .matplotlib-figure {
         background-color: #1E1E1E;
     }
@@ -148,7 +151,7 @@ with tabs[0]:
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")  # Set default threshold to 240
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")  # Default threshold set to 240
 
 # Nutrient Leaching Tab
 with tabs[6]:
@@ -250,8 +253,7 @@ if uploaded_stl and run_button:
                         red = src.read(1)
                         green = src.read(2)
                         blue = src.read(3)
-                        # Detect burned areas (red regions: high red, low green/blue)
-                        # Using the adjustable threshold for red channel only to detect burned areas
+                        # Detect burned areas (red regions: high red, low green/blue, using threshold)
                         burned_mask = (red > burn_threshold).astype(np.float32)
                         # Optionally, add color-based check for robustness
                         # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
@@ -264,9 +266,16 @@ if uploaded_stl and run_button:
     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
-    # Plotting with correct orientation and aspect ratio
-    def plot_with_correct_aspect(ax, data, cmap, vmin=None, vmax=None):
+    # Plotting with correct orientation and aspect ratio, including burned area overlay option
+    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
+        # Plot the main data
         im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
+        # Overlay burned areas if requested and available
+        if show_burned and burned_mask is not None:
+            # Create a colormap for burned areas (red for 1, transparent for 0)
+            burned_cmap = ListedColormap(['none', 'red'])
+            ax.imshow(burned_mask, cmap=burned_cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), alpha=alpha)
+        # Set aspect ratio for geographical accuracy
         aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
         ax.set_aspect(aspect_ratio)
         ax.set_xlabel('Longitude (°E)')
@@ -274,8 +283,12 @@ if uploaded_stl and run_button:
         return im
 
     with tabs[0]:  # DEM & Flow Simulation
+        st.header("DEM & Flow Simulation")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max)
+        plot_with_burned_overlay(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         step = max(1, grid_res // 20)
         ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                   -dz_dx[::step, ::step], -dz_dy[::step, ::step],
@@ -286,9 +299,8 @@ if uploaded_stl and run_button:
         st.header("Burned Areas")
         if burned_mask is not None:
             fig, ax = plt.subplots()
-            # Reverse colormap: 0 = Burned (red), 1 = Non-burned (black)
-            cmap = ListedColormap(['red', 'black'])
-            # Use origin='upper' to flip the plot upright
+            # Use origin='upper' to match your TIFF orientation
+            cmap = ListedColormap(['red', 'black'])  # 0 = Burned (red), 1 = Non-burned (black)
             im = ax.imshow(burned_mask, cmap=cmap, origin='upper', extent=(left_bound, right_bound, bottom_bound, top_bound))
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
@@ -301,23 +313,27 @@ if uploaded_stl and run_button:
             st.write("No burned area data uploaded or TIFF processing failed.")
 
     with tabs[2]:  # Slope Map
+        st.header("Slope Map")
         with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
             slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
-        st.subheader("Slope Map")
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
+        plot_with_burned_overlay(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
     with tabs[3]:  # Aspect Map
+        st.header("Aspect Map")
         with st.expander("Visualization Options"):
             aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
             aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
-        st.subheader("Aspect Map")
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
+        plot_with_burned_overlay(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
     with tabs[4]:  # Retention Time
@@ -335,21 +351,30 @@ if uploaded_stl and run_button:
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
     with tabs[7]:  # Flow Accumulation
-        st.subheader("Flow Accumulation")
+        st.header("Flow Accumulation")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, flow_acc, 'Blues')
+        plot_with_burned_overlay(ax, flow_acc, 'Blues', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
     with tabs[8]:  # TWI
-        st.subheader("Topographic Wetness Index")
+        st.header("Topographic Wetness Index")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, twi, 'RdYlBu')
+        plot_with_burned_overlay(ax, twi, 'RdYlBu', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
     with tabs[9]:  # Curvature
-        st.subheader("Curvature Analysis")
+        st.header("Curvature Analysis")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, curvature, 'Spectral')
+        plot_with_burned_overlay(ax, curvature, 'Spectral', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
         st.pyplot(fig)
 
     with tabs[10]:  # Scenario GIFs
