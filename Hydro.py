@@ -335,12 +335,17 @@ if uploaded_stl and run_button:
     # Helper function for plotting with burned area overlay
     def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
                                  burned_mask=None, show_burned=True, alpha=0.5):
-        im = ax.imshow(data, cmap=cmap, origin='lower',
+        # Flip data vertically to correct orientation (north up)
+        data = np.flipud(data)
+        if burned_mask is not None and show_burned:
+            burned_mask = np.flipud(burned_mask)
+        
+        im = ax.imshow(data, cmap=cmap, origin='upper',  # Changed to 'upper' for correct orientation
                        extent=(left_bound, right_bound, bottom_bound, top_bound),
                        vmin=vmin, vmax=vmax)
         if show_burned and burned_mask is not None:
             burned_cmap = ListedColormap(['none', 'red'])
-            ax.imshow(burned_mask, cmap=burned_cmap, origin='lower',
+            ax.imshow(burned_mask, cmap=burned_cmap, origin='upper',
                       extent=(left_bound, right_bound, bottom_bound, top_bound),
                       alpha=alpha)
         aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
@@ -390,7 +395,7 @@ if uploaded_stl and run_button:
             fig, ax = plt.subplots()
             cmap = ListedColormap(['red', 'black'])
             im = ax.imshow(
-                burned_mask, cmap=cmap, origin='upper',
+                np.flipud(burned_mask), cmap=cmap, origin='upper',  # Flip to correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
@@ -545,12 +550,13 @@ if uploaded_stl and run_button:
 
             # Combined Effect Maps
             # Runoff Potential Map: Higher slope and burned areas increase runoff
-            runoff_potential = runoff_val * (1 + slope / slope.max())  # Base runoff scaled by normalized slope
+            slope_normalized = slope / np.max(slope)  # Normalize slope to [0, 1]
+            runoff_potential = runoff_val * (1 + slope_normalized)  # Base runoff scaled by slope
             runoff_potential[burned_mask == 1] *= (1 + burn_factor_val)  # Increase in burned areas
             runoff_potential = np.clip(runoff_potential, 0, 1)  # Ensure within [0, 1]
 
             # Erosion Risk Map: Higher slope and burned areas increase erosion risk
-            erosion_risk = base_erosion_rate * (1 + slope / slope.max())  # Base erosion scaled by normalized slope
+            erosion_risk = base_erosion_rate * (1 + slope_normalized)  # Base erosion scaled by slope
             erosion_risk[burned_mask == 1] *= erosion_multiplier_burned  # Increase in burned areas
 
             # Display statistics
@@ -565,7 +571,7 @@ if uploaded_stl and run_button:
             st.subheader("Infiltration Map (mm/hr)")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                infiltration_map, cmap='Greens', origin='lower',
+                np.flipud(infiltration_map), cmap='Greens', origin='upper',  # Flip for correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
@@ -579,7 +585,7 @@ if uploaded_stl and run_button:
             st.subheader("Erosion Map (tons/ha)")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                erosion_map, cmap='OrRd', origin='lower',
+                np.flipud(erosion_map), cmap='OrRd', origin='upper',  # Flip for correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             ax.set_aspect(aspect_ratio)
@@ -592,7 +598,7 @@ if uploaded_stl and run_button:
             st.subheader("Runoff Potential Map (Normalized)")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                runoff_potential, cmap='Blues', origin='lower',
+                np.flipud(runoff_potential), cmap='Blues', origin='upper',  # Flip for correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound),
                 vmin=0, vmax=1
             )
@@ -606,7 +612,7 @@ if uploaded_stl and run_button:
             st.subheader("Erosion Risk Map (tons/ha)")
             fig, ax = plt.subplots()
             im = ax.imshow(
-                erosion_risk, cmap='YlOrRd', origin='lower',
+                np.flipud(erosion_risk), cmap='YlOrRd', origin='upper',  # Flip for correct orientation
                 extent=(left_bound, right_bound, bottom_bound, top_bound)
             )
             ax.set_aspect(aspect_ratio)
@@ -617,10 +623,10 @@ if uploaded_stl and run_button:
 
             st.info("""
             **Interpretation**:  
-            - **Infiltration Map**: Lower values in burned areas indicate reduced infiltration.  
-            - **Erosion Map**: Higher values in burned areas reflect increased soil loss.  
-            - **Runoff Potential Map**: Combines slope and burned areas; higher values indicate greater runoff likelihood.  
-            - **Erosion Risk Map**: Combines slope and burned areas; higher values indicate greater erosion risk.  
+            - **Infiltration Map**: Lower values in burned areas indicate reduced infiltration, increasing runoff.  
+            - **Erosion Map**: Higher values in burned areas reflect increased soil loss due to less vegetation.  
+            - **Runoff Potential Map**: Combines slope and burned areas; higher values (darker blue) indicate greater runoff likelihood, reflecting steeper slopes and burned conditions.  
+            - **Erosion Risk Map**: Combines slope and burned areas; higher values (redder tones) indicate greater erosion risk, reflecting steeper slopes and burned conditions.  
             """)
         else:
             st.write(f"**Total Runoff:** {V_runoff:.2f} m³")
