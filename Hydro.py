@@ -4,11 +4,9 @@ import matplotlib.pyplot as plt
 from stl import mesh
 from scipy.interpolate import griddata
 import tempfile
-import io
 import rasterio
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, Resampling
-import imageio
 import os
 from PIL import Image
 from scipy.ndimage import convolve
@@ -264,7 +262,7 @@ if uploaded_stl and run_button:
 
                         # Define target grid based on DEM
                         target_transform = from_origin(left_bound, top_bound, dx, dy)
-                        target_crs = 'EPSG:4326'  # Assuming DEM is in WGS84
+                        target_crs = 'EPSG:4326'
                         target_shape = grid_z.shape
 
                         # Resample burned_mask to match DEM grid
@@ -284,7 +282,7 @@ if uploaded_stl and run_button:
             st.error(f"Error processing burned area TIFF: {e}")
             burned_mask = None
 
-    # Calculate spatially varying parameters
+    # Calculate spatially varying parameters for runoff
     area_m2 = area_val * 10000.0
     total_rain_m = (rainfall_val / 1000.0) * duration_val
     if burned_mask is not None:
@@ -373,4 +371,185 @@ if uploaded_stl and run_button:
         # Hydrograph plot
         st.subheader("Hydrograph")
         fig, ax = plt.subplots()
-        ax.plot(t, Q, label="Total Flow",
+        ax.plot(t, Q, label="Total Flow", color='blue', linewidth=2)
+        if burned_mask is not None:
+            ax.plot(t, Q_unburned, label="Unburned Flow", linestyle='--', color='green', linewidth=2)
+            ax.plot(t, Q_burned, label="Burned Flow", linestyle='--', color='red', linewidth=2)
+        ax.set_xlabel("Time (hr)")
+        ax.set_ylabel("Flow (m³/hr)")
+        ax.set_title("Simulated Flow Hydrograph")
+        ax.legend()
+        st.pyplot(fig)
+
+    # Burned Areas tab
+    with tabs[1]:
+        st.header("Burned Areas")
+        if burned_mask is not None:
+            fig, ax = plt.subplots()
+            cmap_display = ListedColormap(['red', 'black'])
+            im = ax.imshow(
+                burned_mask, cmap=cmap_display, origin='upper',
+                extent=(left_bound, right_bound, bottom_bound, top_bound)
+            )
+            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
+            aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
+            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])
+            st.pyplot(fig)
+        else:
+            st.write("No burned area data uploaded or TIFF processing failed.")
+
+    # Slope Map tab
+    with tabs[2]:
+        st.header("Slope Map")
+        with st.expander("Visualization Options"):
+            slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
+            slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
+            slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
+        fig, ax = plt.subplots()
+        plot_with_burned_overlay(
+            ax, slope, slope_cmap, 
+            vmin=slope_vmin, vmax=slope_vmax,
+            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+        )
+        st.pyplot(fig)
+
+    # Aspect Map tab
+    with tabs[3]:
+        st.header("Aspect Map")
+        with st.expander("Visualization Options"):
+            aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
+            aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
+            aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
+        fig, ax = plt.subplots()
+        plot_with_burned_overlay(
+            ax, aspect, aspect_cmap, 
+            vmin=aspect_vmin, vmax=aspect_vmax,
+            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+        )
+        st.pyplot(fig)
+
+    # Retention Time tab
+    with tabs[4]:
+        st.subheader("Retention Time")
+        if retention_time is not None:
+            st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
+        else:
+            st.write("No effective runoff → Retention time not applicable.")
+
+    # GeoTIFF Export tab
+    with tabs[5]:
+        st.subheader("GeoTIFF Export")
+        st.write("Export functionality to be implemented (placeholder).")
+
+    # Nutrient Leaching tab
+    with tabs[6]:
+        st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
+
+    # Flow Accumulation tab
+    with tabs[7]:
+        st.header("Flow Accumulation")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
+        fig, ax = plt.subplots()
+        plot_with_burned_overlay(
+            ax, flow_acc, 'Blues',
+            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+        )
+        st.pyplot(fig)
+
+    # TWI tab
+    with tabs[8]:
+        st.header("Topographic Wetness Index")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
+        fig, ax = plt.subplots()
+        plot_with_burned_overlay(
+            ax, twi, 'RdYlBu',
+            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+        )
+        st.pyplot(fig)
+
+    # Curvature tab
+    with tabs[9]:
+        st.header("Curvature Analysis")
+        with st.expander("Visualization Options"):
+            show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
+            burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
+        fig, ax = plt.subplots()
+        plot_with_burned_overlay(
+            ax, curvature, 'Spectral',
+            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+        )
+        st.pyplot(fig)
+
+    # Scenario GIFs tab
+    with tabs[10]:
+        st.write("GIF generation to be implemented (placeholder).")
+
+    # Burned-Area Hydro Impacts tab
+    with tabs[11]:
+        st.header("Burned-Area Hydro Impacts")
+        st.markdown("""
+        **How Burned Areas Affect Hydrogeology**  
+        - **Reduced Infiltration** in burned patches → More surface runoff  
+        - **Accelerated Erosion** (less vegetative cover) → Higher sediment loads  
+        - **Decreased Groundwater Recharge** (if infiltration is lower)  
+        - **Nutrient & Ash Loading** in runoff → Potential water quality issues  
+        """)
+        st.subheader("Advanced Burned-Area Parameters")
+        base_infiltration = st.number_input("Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0)
+        infiltration_reduction = st.slider("Infiltration Reduction in Burned Areas (fraction)", 0.0, 1.0, 0.5, 0.05)
+        base_erosion_rate = st.number_input("Base Erosion Rate (tons/ha)", value=0.5, step=0.1)
+        erosion_multiplier_burned = st.slider("Erosion Multiplier in Burned Areas", 1.0, 5.0, 2.0, 0.1)
+        if burned_mask is not None:
+            infiltration_map = np.full_like(grid_z, base_infiltration)
+            infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
+            infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
+            erosion_map = np.full_like(grid_z, base_erosion_rate)
+            erosion_map[burned_mask == 1] *= erosion_multiplier_burned
+            total_erosion = erosion_map.sum()
+            st.write(f"**Infiltration Volume (mm*cell_area) over the domain:** ~{infiltration_volume_total:.2f} mm-hr equivalent")
+            st.write(f"**Estimated Erosion (placeholder):** {total_erosion:.2f} tons")
+            infiltration_ratio = infiltration_map.mean() / base_infiltration
+            new_runoff_coefficient = runoff_val + burn_factor_val * (1.0 - infiltration_ratio)
+            new_runoff_coefficient = np.clip(new_runoff_coefficient, 0.0, 1.0)
+            st.write(f"**Adjusted Runoff Coefficient** (approx): {new_runoff_coefficient:.2f}")
+            burned_fraction = np.mean(burned_mask)
+            nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)
+            st.write(f"**Potential Increase in Nutrient Load**: from {nutrient_load:.2f} to ~{nutrient_load_burned:.2f} kg")
+            st.subheader("Infiltration Map (mm/hr)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(infiltration_map, cmap='Greens', origin='lower',
+                           extent=(left_bound, right_bound, bottom_bound, top_bound))
+            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
+            aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Infiltration Rate (mm/hr)")
+            st.pyplot(fig)
+            st.info("""
+            **Interpretation**:  
+            - Reduced infiltration in burned areas leads to higher surface runoff.  
+            - This may result in higher peak flows, lower groundwater recharge, and increased nutrient/ash loads.
+            """)
+        else:
+            st.warning("No burned area detected or TIFF missing. Please upload a valid burned-area TIFF to see advanced impacts.")
+
+    # Parameter Comparison tab (placeholder)
+    with tabs[12]:
+        st.header("Parameter Comparison")
+        st.write("This section is a placeholder for comparing different parameter sets or scenarios.")
+
+else:
+    st.info("Please upload an STL file and click 'Run Analysis' to begin.")
