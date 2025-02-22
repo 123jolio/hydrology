@@ -192,6 +192,9 @@ with tabs[10]:
 # 10. Processing and Display Logic
 # -----------------------------------------------------------------------------
 if uploaded_stl and run_button:
+    # Save uploaded STL bytes so we can reuse them (for DEM processing and 3D viewer)
+    stl_bytes = uploaded_stl.getvalue()
+    
     # Retrieve parameters
     scale_val = st.session_state.scale
     offset_val = st.session_state.offset
@@ -213,9 +216,9 @@ if uploaded_stl and run_button:
     gif_frames_val = st.session_state.gif_frames
     gif_fps_val = st.session_state.gif_fps
 
-    # Load and process STL file
+    # Load and process STL file for DEM (using stl_bytes)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
-        tmp_stl.write(uploaded_stl.read())
+        tmp_stl.write(stl_bytes)
         stl_mesh = mesh.Mesh.from_file(tmp_stl.name)
     vertices = stl_mesh.vectors.reshape(-1, 3)
     x_raw, y_raw, z_raw = vertices[:, 0], vertices[:, 1], vertices[:, 2]
@@ -273,7 +276,7 @@ if uploaded_stl and run_button:
                     else:
                         red = src.read(1)
                         burned_mask = (red > burn_threshold_val).astype(np.float32)
-                        # Force binary (0 or 1)
+                        # Force binary: 1 for burned, 0 for not burned
                         burned_mask[burned_mask > 0] = 1
                         if burned_mask.shape != grid_z.shape:
                             st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
@@ -299,9 +302,10 @@ if uploaded_stl and run_button:
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # -----------------------------------------------------------------------------
-    # Helper: Plotting with Burned Overlay
+    # Helper: Plotting Function with Burned Overlay
     # -----------------------------------------------------------------------------
-    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
+    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
+                                 burned_mask=None, show_burned=True, alpha=0.5):
         im = ax.imshow(data, cmap=cmap, origin='lower',
                        extent=(left_bound, right_bound, bottom_bound, top_bound),
                        vmin=vmin, vmax=vmax)
@@ -490,11 +494,11 @@ if uploaded_stl and run_button:
     # 3D STL Viewer Tab using Plotly Mesh3d
     with tabs[12]:
         st.header("3D STL Viewer")
-        if uploaded_stl:
+        if stl_bytes is not None:
             try:
-                # Write uploaded STL to temporary file
+                # Write stl_bytes to a temporary file for 3D viewing
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_3d:
-                    tmp_3d.write(uploaded_stl.read())
+                    tmp_3d.write(stl_bytes)
                     stl_path = tmp_3d.name
                 stl_mesh_3d = mesh.Mesh.from_file(stl_path)
                 vertices = stl_mesh_3d.vectors.reshape(-1, 3)
@@ -517,7 +521,7 @@ if uploaded_stl and run_button:
             except Exception as e:
                 st.error(f"Error displaying 3D STL: {e}")
         else:
-            st.write("No STL file uploaded.")
-
+            st.write("No STL file available.")
+            
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
