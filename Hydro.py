@@ -19,16 +19,53 @@ from scipy.ndimage import convolve  # For improved curvature calculation
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
 
 # -----------------------------------------------------------------------------
-# 2. Inject minimal, professional CSS (dark sidebar, no gradient)
+# 2. Inject custom CSS to mimic Office-like ribbon layout
 # -----------------------------------------------------------------------------
 st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI&display=swap" rel="stylesheet">
 <style>
+/* Global Office styling */
 html, body {
-    background-color: #f5f5f5;
-    font-family: "Roboto", sans-serif;
+    background-color: #f3f3f3;
+    font-family: "Segoe UI", sans-serif;
     color: #333;
+    margin: 0;
+    padding: 0;
 }
+
+/* Office Ribbon Header */
+#office-ribbon {
+    background-color: #0078d7;
+    color: white;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 2px solid #005a9e;
+}
+#office-ribbon .ribbon-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+}
+#office-ribbon .ribbon-tabs {
+    display: flex;
+    gap: 15px;
+}
+#office-ribbon .ribbon-tabs button {
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 1rem;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+#office-ribbon .ribbon-tabs button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Sidebar styling */
 [data-testid="stSidebar"] > div:first-child {
     background: #2a2a2a;
     color: white;
@@ -37,39 +74,53 @@ html, body {
 [data-testid="stSidebar"] .css-1d391kg p {
     color: white;
 }
-div.stTabs > div {
-    border: none;
-}
+
+/* Adjust main header */
 h1 {
     text-align: center;
-    font-size: 3rem;
-    color: #2e7bcf;
+    font-size: 2.5rem;
+    color: #0078d7;
+    margin-top: 20px;
 }
+
+/* Buttons */
 .stButton>button {
-    background-color: #2e7bcf;
+    background-color: #0078d7;
     color: white;
-    border-radius: 0.5rem;
+    border-radius: 4px;
     font-size: 1rem;
     padding: 0.5rem 1rem;
     border: none;
 }
-.css-1emrehy.edgvbvh3 { 
-    background-color: #2e7bcf !important; 
-    color: white !important;
-    border: none !important;
+
+/* Tabs container */
+div.stTabs > div {
+    border: none;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. Header (logo + title)
+# 3. Office-style Ribbon Header
 # -----------------------------------------------------------------------------
+st.markdown("""
+<div id="office-ribbon">
+  <div class="ribbon-title">Advanced Hydrogeology & DEM Analysis</div>
+  <div class="ribbon-tabs">
+    <button onclick="window.location.href='#'">Home</button>
+    <button onclick="window.location.href='#'">Analysis</button>
+    <button onclick="window.location.href='#'">Export</button>
+    <button onclick="window.location.href='#'">Help</button>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Optionally, display a logo on the left (if available)
 try:
     st.image("logo.png", width=200)
 except Exception:
     pass
 
-st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect). It overlays a flow simulation on the DEM, estimates retention time and nutrient leaching, and computes additional terrain derivatives (flow accumulation, topographic wetness index (TWI), and curvature).  
 If a burned‐area TIFF file is provided—with red regions indicating burned and white indicating non‐burned areas—its effect on the hydrological response is incorporated (reduced infiltration and increased surface runoff).  
@@ -269,7 +320,6 @@ if uploaded_stl is not None:
     twi = np.log((A_eff + 1) / (np.tan(slope_radians) + epsilon))
 
     # ---- Improved Curvature Analysis using a Laplacian Convolution ----
-    # Create a 3x3 Laplacian kernel. If the grid is nearly square, we can approximate curvature as:
     laplacian_kernel = np.array([[1,  1, 1],
                                  [1, -8, 1],
                                  [1,  1, 1]]) / (dx_meters * dy_meters)
@@ -321,9 +371,9 @@ if uploaded_stl is not None:
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax, aspect='auto')
         step = max(1, global_grid_res // 20)
-        q = ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
-                      -dz_dx[::step, ::step], -dz_dy[::step, ::step],
-                      color='blue', scale=1e5, width=0.0025)
+        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
+                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+                  color='blue', scale=1e5, width=0.0025)
         ax.set_title("DEM with Flow Overlay")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
