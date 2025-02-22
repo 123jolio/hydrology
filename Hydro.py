@@ -4,14 +4,7 @@ import matplotlib.pyplot as plt
 from stl import mesh
 from scipy.interpolate import griddata
 import tempfile
-import io
 import rasterio
-from rasterio.transform import from_origin
-from rasterio.warp import reproject, Resampling
-import imageio
-import os
-from PIL import Image
-from scipy.ndimage import convolve
 from matplotlib.colors import ListedColormap
 
 # Set page configuration
@@ -33,11 +26,14 @@ tabs = st.tabs(tab_names)
 # Georeference bounding box (EPSG:4326) - Example coordinates
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
+# File uploaders and run button (moved to the top for accessibility)
+uploaded_stl = st.file_uploader("Upload STL File", type=["stl"])
+uploaded_tiff = st.file_uploader("Upload Burned Areas TIFF", type=["tif", "tiff"])
+run_button = st.button("Run Analysis")
+
 # DEM & Flow Simulation Tab (unchanged example)
 with tabs[0]:
     st.header("DEM & Flow Simulation")
-    uploaded_stl = st.file_uploader("Upload STL File", type=["stl"])
-    run_button = st.button("Run Analysis")
     scale_val = st.slider("Scale Factor", 0.1, 10.0, 1.0)
     offset_val = st.slider("Offset (m)", -100.0, 100.0, 0.0)
     dem_min_val = st.slider("Min DEM Height (m)", -1000.0, 0.0, 0.0)
@@ -95,11 +91,11 @@ if uploaded_stl and run_button:
     z_adj = (z_raw * scale_val) + offset_val
 
     x_min, x_max = x_raw.min(), x_raw.max()
-    y_min, y_max = y_raw.min(), y_raw.max()
+    y_min, y_max = y_raw.min(), y_max.max()
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res_val)
-    yi = np.linspace(bottom_bound, top_bound, grid_res_val)  # Should be bottom_bound
+    yi = np.linspace(bottom_bound, top_bound, grid_res_val)
     grid_x, grid_y = np.meshgrid(xi, yi)
 
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
@@ -116,56 +112,64 @@ if uploaded_stl and run_button:
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-    # Example burned mask (replace with actual TIFF loading if available)
-    burned_mask = np.random.rand(grid_res_val, grid_res_val) > (1 - burn_threshold_val)
-    burned_mask = burned_mask.astype(int)
+    # Process burned areas TIFF if uploaded
+    burned_mask = None
+    if uploaded_tiff:
+        with rasterio.open(uploaded_tiff) as src:
+            band1 = src.read(1)
+            height, width = band1.shape
+            cols, rows = np.meshgrid(np.arange(width), np.arange(height))
+            xs, ys = rasterio.transform.xy(src.transform, rows, cols)
+            xs, ys = np.array(xs), np.array(ys)
+            points = np.column_stack((xs.ravel(), ys.ravel()))
+            values = band1.ravel()
+            # Interpolate onto the DEM grid using nearest-neighbor
+            burned_values = griddata(points, values, (grid_x, grid_y), method='nearest')
+            burned_mask = (burned_values > burn_threshold_val).astype(int)
+    else:
+        st.warning("No burned areas TIFF uploaded. Please upload a TIFF file to see the impact maps.")
 
-    # *** Burned-Area Hydro Impacts Tab (Enhanced) ***
+    # *** Burned-Area Hydro Impacts Tab ***
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
 
-        st.markdown("""
-        **How Burned Areas Affect Hydrogeology**  
-        - **Reduced Infiltration**: Increases surface runoff in burned patches.  
-        - **Accelerated Erosion**: Less vegetative cover leads to higher sediment loads.  
-        - **Decreased Groundwater Recharge**: Lower infiltration reduces recharge potential.  
-        - **Nutrient & Ash Loading**: Enhanced runoff carries more nutrients/ash, impacting water quality.  
-        """)
-
-        # User inputs for burned-area parameters
-        st.subheader("Advanced Burned-Area Parameters")
-        base_infiltration = st.number_input(
-            "Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0
-        )
-        infiltration_reduction = st.slider(
-            "Infiltration Reduction in Burned Areas (fraction)",
-            0.0, 1.0, 0.5, 0.05
-        )
-        base_erosion_rate = st.number_input(
-            "Base Erosion Rate (tons/ha)", value=0.5, step=0.1
-        )
-        erosion_multiplier_burned = st.slider(
-            "Erosion Multiplier in Burned Areas",
-            1.0, 5.0, 2.0, 0.1
-        )
-
         if burned_mask is not None:
-            # Existing infiltration map
-            infiltration_map = np.full_like(grid_z, base_infiltration)
-            infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
-            infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
+            st.subheader("Advanced Burned-Area Parameters")
+            base_infiltration = st.number_input(
+                "Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0
+            )
+            infiltration_reduction = st.slider(
+                "Infiltration Reduction in Burned Areas (fraction)",
+                0.0, 1.0, 0.5, 0.05
+            )
+            base_erosion_rate = st.number_input(
+                "Base Erosion Rate (tons/ha)", value=0.5, step=0.1
+            )
+            erosion_multiplier_burned = st.slider(
+                "Erosion Multiplier in Burned Areas",
+                1.0, 5.0, 2.0, 0.1
+            )
 
-            # Adjusted runoff coefficient (existing)
-            infiltration_ratio = (infiltration_map.mean() / base_infiltration)
-            new_runoff_coefficient = runoff_val + burn_factor_val * (1.0 - infiltration_ratio)
-            new_runoff_coefficient = np.clip(new_runoff_coefficient, 0.0, 1.0)
+            # Calculate total rainfall depth
+            total_rainfall_depth = rainfall_val * duration_val
 
-            # Nutrient load increase (existing)
-            burned_fraction = burned_mask.mean()
-            nutrient_load = nutrient_val * area_val  # Example calculation
-            nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)
+            # Infiltration Map
+            st.subheader("Infiltration Map (mm/hr)")
+            infiltration_map = base_infiltration * (1 - infiltration_reduction * burned_mask)
+            fig, ax = plt.subplots()
+            im = ax.imshow(
+                infiltration_map, cmap='Greens', origin='lower',
+                extent=(left_bound, right_bound, bottom_bound, top_bound)
+            )
+            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * \
+                           (meters_per_deg_lat / meters_per_deg_lon)
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Infiltration Rate (mm/hr)")
+            st.pyplot(fig)
 
-            # NEW: Runoff Coefficient Map
+            # Runoff Coefficient Map
             st.subheader("Runoff Coefficient Map")
             runoff_coeff_map = np.minimum(
                 runoff_val * (1 + (burn_factor_val - 1) * burned_mask), 1.0
@@ -176,19 +180,31 @@ if uploaded_stl and run_button:
                 extent=(left_bound, right_bound, bottom_bound, top_bound),
                 vmin=0, vmax=1
             )
-            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * \
-                           (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             fig.colorbar(im, ax=ax, label="Runoff Coefficient")
             st.pyplot(fig)
 
-            # NEW: Erosion Risk Map
+            # Runoff Depth Map
+            st.subheader("Runoff Depth Map (mm)")
+            runoff_depth_map = runoff_coeff_map * total_rainfall_depth
+            fig, ax = plt.subplots()
+            im = ax.imshow(
+                runoff_depth_map, cmap='Blues', origin='lower',
+                extent=(left_bound, right_bound, bottom_bound, top_bound)
+            )
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Runoff Depth (mm)")
+            st.pyplot(fig)
+
+            # Erosion Risk Map
             st.subheader("Erosion Risk Map")
             max_slope = np.max(slope)
             erosion_risk_map = base_erosion_rate * (slope / max_slope) * \
-                              (1 + (erosion_multiplier_burned - 1) * burned_mask)
+                               (1 + (erosion_multiplier_burned - 1) * burned_mask)
             fig, ax = plt.subplots()
             im = ax.imshow(
                 erosion_risk_map, cmap='OrRd', origin='lower',
@@ -200,18 +216,15 @@ if uploaded_stl and run_button:
             fig.colorbar(im, ax=ax, label="Erosion Risk (tons/ha)")
             st.pyplot(fig)
 
-            # Interpretation text for the new maps
+            # Interpretation
             st.write("""
-            The **Runoff Coefficient Map** shows the spatial variation in runoff potential. 
-            Higher values (darker blue) indicate areas where a larger fraction of rainfall becomes surface runoff, 
-            particularly in burned regions due to reduced infiltration.
-
-            The **Erosion Risk Map** highlights areas susceptible to soil erosion. 
-            Darker red areas have higher risk, influenced by both steep slopes and burned land cover.
+            - **Infiltration Map**: Shows infiltration rates (mm/hr), with lower values in burned areas due to reduced soil absorption capacity.
+            - **Runoff Coefficient Map**: Displays the fraction of rainfall that becomes runoff, higher in burned areas.
+            - **Runoff Depth Map**: Indicates total runoff depth (mm), with higher values where runoff coefficients are elevated.
+            - **Erosion Risk Map**: Highlights areas at risk of erosion, amplified by steep slopes and burned conditions.
             """)
-
         else:
-            st.warning("No burned area detected or TIFF missing. Upload a valid burned-area TIFF.")
+            st.write("Please upload a burned areas TIFF to see the impact maps.")
 
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
