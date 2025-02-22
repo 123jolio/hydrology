@@ -235,14 +235,28 @@ if uploaded_stl and run_button:
     # Nutrient leaching
     nutrient_load = nutrient * (1 - retention) * erosion * area
 
-    # Burned area processing with adjustable low threshold
-    burned_mask = 75
+    # Burned area processing for RGB TIFF with color-based detection
+    burned_mask = None
     if uploaded_burned:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
-            tmp_tif.write(uploaded_burned.read())
-            with rasterio.open(tmp_tif.name) as src:
-                burned_img = src.read(1)
-                burned_mask = (burned_img > burn_threshold).astype(np.float32)
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
+                tmp_tif.write(uploaded_burned.read())
+                with rasterio.open(tmp_tif.name) as src:
+                    # Check if the TIFF has at least 3 bands (RGB)
+                    if src.count < 3:
+                        st.warning("The burned area TIFF must be an RGB image with 3 bands.")
+                    else:
+                        # Read all three bands: Red (1), Green (2), Blue (3)
+                        red = src.read(1)
+                        green = src.read(2)
+                        blue = src.read(3)
+                        # Detect burned areas (red regions: high red, low green/blue)
+                        burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
+                        # Optionally, use the adjustable threshold for fine-tuning
+                        burned_mask = (red > burn_threshold).astype(np.float32)  # Use threshold for red channel
+        except Exception as e:
+            st.error(f"Error processing burned area TIFF: {e}")
+            burned_mask = None
 
     # Terrain derivatives (simplified)
     flow_acc = np.ones_like(grid_z)  # Placeholder
@@ -277,7 +291,7 @@ if uploaded_stl and run_button:
             cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
             st.pyplot(fig)
         else:
-            st.write("No burned area data uploaded.")
+            st.write("No burned area data uploaded or TIFF processing failed.")
 
     with tabs[2]:  # Slope Map
         with st.expander("Visualization Options"):
