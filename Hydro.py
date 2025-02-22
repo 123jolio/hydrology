@@ -19,53 +19,16 @@ from scipy.ndimage import convolve  # For improved curvature calculation
 st.set_page_config(page_title="Advanced Hydrogeology & DEM Analysis", layout="wide")
 
 # -----------------------------------------------------------------------------
-# 2. Inject custom CSS to mimic Office-like ribbon layout
+# 2. Inject minimal, professional CSS (dark sidebar, no gradient)
 # -----------------------------------------------------------------------------
 st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Segoe+UI&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
 <style>
-/* Global Office styling */
 html, body {
-    background-color: #f3f3f3;
-    font-family: "Segoe UI", sans-serif;
+    background-color: #f5f5f5;
+    font-family: "Roboto", sans-serif;
     color: #333;
-    margin: 0;
-    padding: 0;
 }
-
-/* Office Ribbon Header */
-#office-ribbon {
-    background-color: #0078d7;
-    color: white;
-    padding: 10px 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 2px solid #005a9e;
-}
-#office-ribbon .ribbon-title {
-    font-size: 1.75rem;
-    font-weight: 600;
-}
-#office-ribbon .ribbon-tabs {
-    display: flex;
-    gap: 15px;
-}
-#office-ribbon .ribbon-tabs button {
-    background: transparent;
-    border: none;
-    color: white;
-    font-size: 1rem;
-    padding: 6px 12px;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background 0.2s;
-}
-#office-ribbon .ribbon-tabs button:hover {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-/* Sidebar styling */
 [data-testid="stSidebar"] > div:first-child {
     background: #2a2a2a;
     color: white;
@@ -74,53 +37,39 @@ html, body {
 [data-testid="stSidebar"] .css-1d391kg p {
     color: white;
 }
-
-/* Adjust main header */
+div.stTabs > div {
+    border: none;
+}
 h1 {
     text-align: center;
-    font-size: 2.5rem;
-    color: #0078d7;
-    margin-top: 20px;
+    font-size: 3rem;
+    color: #2e7bcf;
 }
-
-/* Buttons */
 .stButton>button {
-    background-color: #0078d7;
+    background-color: #2e7bcf;
     color: white;
-    border-radius: 4px;
+    border-radius: 0.5rem;
     font-size: 1rem;
     padding: 0.5rem 1rem;
     border: none;
 }
-
-/* Tabs container */
-div.stTabs > div {
-    border: none;
+.css-1emrehy.edgvbvh3 { 
+    background-color: #2e7bcf !important; 
+    color: white !important;
+    border: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. Office-style Ribbon Header
+# 3. Header (logo + title)
 # -----------------------------------------------------------------------------
-st.markdown("""
-<div id="office-ribbon">
-  <div class="ribbon-title">Advanced Hydrogeology & DEM Analysis</div>
-  <div class="ribbon-tabs">
-    <button onclick="window.location.href='#'">Home</button>
-    <button onclick="window.location.href='#'">Analysis</button>
-    <button onclick="window.location.href='#'">Export</button>
-    <button onclick="window.location.href='#'">Help</button>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# Optionally, display a logo (if available)
 try:
     st.image("logo.png", width=200)
 except Exception:
     pass
 
+st.title("Advanced Hydrogeology & DEM Analysis (with Scenario GIFs)")
 st.markdown("""
 This application creates a DEM from an STL file and computes advanced hydrogeological maps (slope, aspect). It overlays a flow simulation on the DEM, estimates retention time and nutrient leaching, and computes additional terrain derivatives (flow accumulation, topographic wetness index (TWI), and curvature).  
 If a burned‐area TIFF file is provided—with red regions indicating burned and white indicating non‐burned areas—its effect on the hydrological response is incorporated (reduced infiltration and increased surface runoff).  
@@ -167,8 +116,6 @@ erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
 st.sidebar.header("Burned Area Effects")
 burn_runoff_factor = st.sidebar.slider("Burned Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1)
-# Transparency slider for burned area overlay
-burned_transparency = st.sidebar.slider("Burned Area Overlay Transparency", 0.0, 1.0, 0.3, 0.05)
 
 # -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
@@ -322,6 +269,7 @@ if uploaded_stl is not None:
     twi = np.log((A_eff + 1) / (np.tan(slope_radians) + epsilon))
 
     # ---- Improved Curvature Analysis using a Laplacian Convolution ----
+    # Create a 3x3 Laplacian kernel. If the grid is nearly square, we can approximate curvature as:
     laplacian_kernel = np.array([[1,  1, 1],
                                  [1, -8, 1],
                                  [1,  1, 1]]) / (dx_meters * dy_meters)
@@ -354,7 +302,7 @@ if uploaded_stl is not None:
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
 
     # -----------------------------------------------------------------------------
-    # 11. Display results in dedicated tabs with burned area overlay
+    # 11. Display results in dedicated tabs
     # -----------------------------------------------------------------------------
     tabs = st.tabs([
         "DEM & Flow Simulation", "Slope Map", "Aspect Map",
@@ -363,39 +311,23 @@ if uploaded_stl is not None:
         "Curvature Analysis", "Scenario GIFs"
     ])
 
-    # Helper function to create a figure and axis with proper aspect ratio
-    def create_fig_ax():
-        spatial_width = right_bound - left_bound
-        spatial_height = top_bound - bottom_bound
-        aspect_ratio = spatial_height / spatial_width
-        fig, ax = plt.subplots(figsize=(8, 8 * aspect_ratio))
-        return fig, ax
-
-    # Helper function to overlay burned mask if available
-    def overlay_burned(ax):
-        if burned_mask is not None:
-            ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                      origin='lower', cmap="Reds", alpha=burned_transparency)
-
-    # Tab 0: DEM with Flow Simulation
+    # Tab 0: DEM heatmap with flow simulation overlay
     with tabs[0]:
         with st.expander("DEM Legend Boundaries"):
             dem_vmin = st.number_input("DEM Minimum (m)", value=global_dem_min, step=1.0)
             dem_vmax = st.number_input("DEM Maximum (m)", value=global_dem_max, step=1.0)
         st.subheader("DEM (Adjusted Elevation) with Flow Simulation")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax)
+                       origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax, aspect='auto')
         step = max(1, global_grid_res // 20)
-        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
-                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
-                  color='blue', scale=1e5, width=0.0025)
-        overlay_burned(ax)
+        q = ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
+                      -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+                      color='blue', scale=1e5, width=0.0025)
         ax.set_title("DEM with Flow Overlay")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="Elevation (m)")
         st.pyplot(fig)
 
     # Tab 1: Slope Map
@@ -406,15 +338,13 @@ if uploaded_stl is not None:
         with st.expander("Colormap Options"):
             slope_cmap = st.selectbox("Select Slope Colormap", ["viridis", "plasma", "inferno", "magma"])
         st.subheader("Slope Map (Degrees)")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
-        overlay_burned(ax)
+                       origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax, aspect='auto')
         ax.set_title("Slope (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="Slope (°)")
         st.pyplot(fig)
 
     # Tab 2: Aspect Map
@@ -425,15 +355,13 @@ if uploaded_stl is not None:
         with st.expander("Colormap Options"):
             aspect_cmap = st.selectbox("Select Aspect Colormap", ["twilight", "hsv", "cool"])
         st.subheader("Aspect Map (Degrees)")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
-        overlay_burned(ax)
+                       origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, aspect='auto')
         ax.set_title("Aspect (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="Aspect (°)")
         st.pyplot(fig)
 
     # Tab 3: Retention Time
@@ -486,15 +414,13 @@ if uploaded_stl is not None:
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
             flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(adjusted_flow_acc)), step=1.0)
         st.subheader("Flow Accumulation Map")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax)
-        overlay_burned(ax)
+                       origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax, aspect='auto')
         ax.set_title("Flow Accumulation (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="Accumulated Flow")
         st.pyplot(fig)
 
     # Tab 7: Topographic Wetness Index (TWI)
@@ -503,15 +429,13 @@ if uploaded_stl is not None:
             twi_vmin = st.number_input("TWI Minimum", value=float(np.min(twi)), step=0.1)
             twi_vmax = st.number_input("TWI Maximum", value=float(np.max(twi)), step=0.1)
         st.subheader("Topographic Wetness Index (TWI)")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(twi, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax)
-        overlay_burned(ax)
+                       origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax, aspect='auto')
         ax.set_title("TWI (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="TWI")
         st.pyplot(fig)
 
     # Tab 8: Curvature Analysis
@@ -520,15 +444,13 @@ if uploaded_stl is not None:
             curv_vmin = st.number_input("Curvature Minimum", value=float(np.min(curvature)), step=0.1)
             curv_vmax = st.number_input("Curvature Maximum", value=float(np.max(curvature)), step=0.1)
         st.subheader("Curvature Analysis")
-        fig, ax = create_fig_ax()
+        fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(curvature, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax)
-        overlay_burned(ax)
+                       origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax, aspect='auto')
         ax.set_title("Curvature (Laplacian Convolution)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect('equal', adjustable='box')
-        fig.tight_layout()
+        fig.colorbar(im, ax=ax, label="Curvature")
         st.pyplot(fig)
 
     # Tab 9: Scenario GIFs
