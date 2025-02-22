@@ -11,6 +11,7 @@ import imageio
 import os
 from PIL import Image
 from scipy.ndimage import convolve
+from matplotlib.colors import ListedColormap
 
 # Set page config for a wide layout and dark theme
 st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
@@ -22,15 +23,11 @@ plt.style.use('dark_background')
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Segoe+UI&display=swap');
-
-    /* Dark mode base styles */
     html, body, [class*="css"] {
         background-color: #1E1E1E !important;
         color: #E0E0E0 !important;
         font-family: 'Segoe UI', sans-serif;
     }
-
-    /* Header and logo container */
     .header-container {
         display: flex;
         align-items: center;
@@ -47,8 +44,6 @@ st.markdown("""
         color: #FFFFFF;
         margin: 0;
     }
-
-    /* Ribbon toolbar */
     .ribbon {
         background-color: #2D2D2D;
         padding: 10px;
@@ -63,8 +58,6 @@ st.markdown("""
         border-radius: 4px;
         padding: 6px 12px;
     }
-
-    /* Tabs styling */
     .stTabs > div {
         background-color: #2D2D2D;
         border-bottom: 2px solid #005A9E;
@@ -84,8 +77,6 @@ st.markdown("""
         border-bottom: 2px solid #005A9E;
         color: #FFFFFF;
     }
-
-    /* Expander and widget styling */
     .streamlit-expanderHeader {
         background-color: #2D2D2D;
         color: #E0E0E0;
@@ -104,15 +95,13 @@ st.markdown("""
         background-color: #333333;
         color: #E0E0E0;
     }
-
-    /* Plot styling */
     .matplotlib-figure {
         background-color: #1E1E1E;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# Header with logo and title from the repository (logo.png)
+# Header with logo and title
 st.markdown("""
     <div class="header-container">
         <img src="logo.png" alt="Logo">
@@ -131,16 +120,16 @@ with st.container():
         run_button = st.button("Run Analysis")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Define tabs
+# Define tabs with "Burned Areas" included
 tabs = st.tabs([
-    "DEM & Flow Simulation", "Slope Map", "Aspect Map", "Retention Time", "GeoTIFF Export",
+    "DEM & Flow Simulation", "Burned Areas", "Slope Map", "Aspect Map", "Retention Time", "GeoTIFF Export",
     "Nutrient Leaching", "Flow Accumulation", "TWI", "Curvature", "Scenario GIFs"
 ])
 
 # Georeference bounds
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
-# DEM & Flow Simulation Tab settings
+# DEM & Flow Simulation Tab
 with tabs[0]:
     st.header("DEM & Flow Simulation")
     with st.expander("Elevation Adjustments", expanded=True):
@@ -159,26 +148,22 @@ with tabs[0]:
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 10, 1, key="burn_threshold")  # Very low default threshold
 
-# Nutrient Leaching Tab settings
-with tabs[5]:
+# Nutrient Leaching Tab
+with tabs[6]:
     st.header("Nutrient Leaching")
     with st.expander("Nutrient Leaching Parameters", expanded=True):
         nutrient = st.number_input("Soil Nutrient (kg/ha)", value=50.0, step=1.0, key="nutrient")
         retention = st.slider("Vegetation Retention", 0.0, 1.0, 0.7, 0.05, key="retention")
         erosion = st.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05, key="erosion")
 
-# Scenario GIFs Tab settings
-with tabs[9]:
+# Scenario GIFs Tab
+with tabs[10]:
     st.header("Scenario GIFs")
     with st.expander("GIF Settings", expanded=True):
         gif_frames = st.number_input("GIF Frames", value=10, step=1, key="gif_frames")
         gif_fps = st.number_input("GIF FPS", value=2, step=1, key="gif_fps")
-
-# Option to overlay burned area TIFF
-st.sidebar.header("Overlay Options")
-overlay_burned_option = st.sidebar.checkbox("Overlay Burned Area TIFF", value=True)
-burned_transparency = st.sidebar.slider("Burned Area Overlay Transparency", 0.0, 1.0, 0.3, 0.05)
 
 # Processing and Display Logic
 if uploaded_stl and run_button:
@@ -196,6 +181,7 @@ if uploaded_stl and run_button:
     sim_hours = st.session_state.sim_hours
     storage = st.session_state.storage
     burn_factor = st.session_state.burn_factor
+    burn_threshold = st.session_state.burn_threshold
     nutrient = st.session_state.nutrient
     retention = st.session_state.retention
     erosion = st.session_state.erosion
@@ -249,124 +235,103 @@ if uploaded_stl and run_button:
     # Nutrient leaching
     nutrient_load = nutrient * (1 - retention) * erosion * area
 
-    # Burned area processing
+    # Burned area processing with adjustable low threshold
     burned_mask = None
     if uploaded_burned:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
             tmp_tif.write(uploaded_burned.read())
             with rasterio.open(tmp_tif.name) as src:
                 burned_img = src.read(1)
-                # Here we assume a simple threshold; adjust as needed
-                burned_mask = (burned_img > 150).astype(np.float32)
+                burned_mask = (burned_img > burn_threshold).astype(np.float32)
 
-    # Terrain derivatives (placeholders/simplified)
-    flow_acc = np.ones_like(grid_z)  # Placeholder for flow accumulation
+    # Terrain derivatives (simplified)
+    flow_acc = np.ones_like(grid_z)  # Placeholder
     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
-    # Helper: Plotting function with correct aspect ratio
+    # Plotting with correct orientation and aspect ratio
     def plot_with_correct_aspect(ax, data, cmap, vmin=None, vmax=None):
         im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
-        # Compute aspect ratio for geographical accuracy
         aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
         ax.set_aspect(aspect_ratio)
         ax.set_xlabel('Longitude (°E)')
         ax.set_ylabel('Latitude (°N)')
         return im
 
-    # Helper: Create figure using consistent size based on spatial extents
-    def create_fig_ax():
-        spatial_width = right_bound - left_bound
-        spatial_height = top_bound - bottom_bound
-        aspect_ratio = spatial_height / spatial_width
-        base_width = 8
-        fig, ax = plt.subplots(figsize=(base_width, base_width * aspect_ratio))
-        return fig, ax
-
-    # Helper: Overlay burned area if enabled
-    def overlay_burned(ax):
-        if overlay_burned_option and (burned_mask is not None):
-            ax.imshow(burned_mask, cmap="Reds", alpha=burned_transparency,
-                      origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
-
-    # Tab 0: DEM & Flow Simulation
-    with tabs[0]:
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max)
+    with tabs[0]:  # DEM & Flow Simulation
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max)
         step = max(1, grid_res // 20)
         ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                   -dz_dx[::step, ::step], -dz_dy[::step, ::step],
                   color='blue', scale=1e5, width=0.0025)
-        overlay_burned(ax)
         st.pyplot(fig)
 
-    # Tab 1: Slope Map
-    with tabs[1]:
+    with tabs[1]:  # Burned Areas
+        st.header("Burned Areas")
+        if burned_mask is not None:
+            fig, ax = plt.subplots()
+            cmap = ListedColormap(['black', 'red'])
+            im = plot_with_correct_aspect(ax, burned_mask, cmap)
+            cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
+            cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
+            st.pyplot(fig)
+        else:
+            st.write("No burned area data uploaded.")
+
+    with tabs[2]:  # Slope Map
         with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
             slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
         st.subheader("Slope Map")
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
-        overlay_burned(ax)
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
         st.pyplot(fig)
 
-    # Tab 2: Aspect Map
-    with tabs[2]:
+    with tabs[3]:  # Aspect Map
         with st.expander("Visualization Options"):
             aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
             aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
         st.subheader("Aspect Map")
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
-        overlay_burned(ax)
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
         st.pyplot(fig)
 
-    # Tab 3: Retention Time
-    with tabs[3]:
+    with tabs[4]:  # Retention Time
         st.subheader("Retention Time")
         if retention_time is not None:
             st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
         else:
             st.write("No effective runoff → Retention time not applicable.")
 
-    # Tab 4: GeoTIFF Export
-    with tabs[4]:
+    with tabs[5]:  # GeoTIFF Export
         st.subheader("GeoTIFF Export")
         st.write("Export functionality to be implemented.")
 
-    # Tab 5: Nutrient Leaching
-    with tabs[5]:
+    with tabs[6]:  # Nutrient Leaching
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    # Tab 6: Flow Accumulation
-    with tabs[6]:
+    with tabs[7]:  # Flow Accumulation
         st.subheader("Flow Accumulation")
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, flow_acc, 'Blues')
-        overlay_burned(ax)
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, flow_acc, 'Blues')
         st.pyplot(fig)
 
-    # Tab 7: TWI
-    with tabs[7]:
+    with tabs[8]:  # TWI
         st.subheader("Topographic Wetness Index")
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, twi, 'RdYlBu')
-        overlay_burned(ax)
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, twi, 'RdYlBu')
         st.pyplot(fig)
 
-    # Tab 8: Curvature
-    with tabs[8]:
+    with tabs[9]:  # Curvature
         st.subheader("Curvature Analysis")
-        fig, ax = create_fig_ax()
-        im = plot_with_correct_aspect(ax, curvature, 'Spectral')
-        overlay_burned(ax)
+        fig, ax = plt.subplots()
+        plot_with_correct_aspect(ax, curvature, 'Spectral')
         st.pyplot(fig)
 
-    # Tab 9: Scenario GIFs
-    with tabs[9]:
+    with tabs[10]:  # Scenario GIFs
         st.write("GIF generation to be implemented.")
 
 else:
