@@ -199,9 +199,9 @@ with tabs[0]:
 
     # Process data once and store in session state
     if 'processed_data' not in st.session_state or run_button:
-        st.session_state.processed_data = None
-        if uploaded_stl:
-            try:
+        try:
+            st.session_state.processed_data = None
+            if uploaded_stl:
                 # Load STL
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".stl") as tmp_stl:
                     tmp_stl.write(uploaded_stl.read())
@@ -342,11 +342,18 @@ with tabs[0]:
                     'nutrient_load': nutrient_load,
                     'V_runoff_unburned': V_runoff_unburned,
                     'V_runoff_burned': V_runoff_burned,
-                    'V_runoff': V_runoff
+                    'V_runoff': V_runoff,
+                    'grid_x': grid_x,
+                    'grid_y': grid_y,
+                    'dz_dx': dz_dx,
+                    'dz_dy': dz_dy
                 }
+        except Exception as e:
+            st.error(f"Error processing data: {e}")
+            st.session_state.processed_data = None
 
     # If data is processed, display dynamically
-    if st.session_state.processed_data is not None:
+    if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
         grid_z = st.session_state.processed_data['grid_z']
         slope = st.session_state.processed_data['slope']
         aspect = st.session_state.processed_data['aspect']
@@ -362,6 +369,10 @@ with tabs[0]:
         V_runoff_unburned = st.session_state.processed_data['V_runoff_unburned']
         V_runoff_burned = st.session_state.processed_data['V_runoff_burned']
         V_runoff = st.session_state.processed_data['V_runoff']
+        grid_x = st.session_state.processed_data['grid_x']
+        grid_y = st.session_state.processed_data['grid_y']
+        dz_dx = st.session_state.processed_data['dz_dx']
+        dz_dy = st.session_state.processed_data['dz_dy']
 
         st.header("DEM & Flow Simulation")
         st.markdown("### This tab displays the Digital Elevation Model (DEM) and flow simulation results.")
@@ -413,7 +424,8 @@ with tabs[0]:
         st.markdown("### This tab shows the distribution of burned areas from the uploaded TIFF.")
         st.markdown("**Instructions**: Upload a georeferenced RGB TIFF to visualize burned areas. If no data appears, ensure the TIFF is valid, has 3 bands, and adjust the 'Burned Area Threshold' in the 'DEM & Flow Simulation' tab to detect burned regions.")
         
-        if burned_mask is not None:
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+            burned_mask = st.session_state.processed_data['burned_mask']
             fig, ax = plt.subplots()
             cmap = ListedColormap(['red', 'black'])
             im = ax.imshow(
@@ -448,7 +460,7 @@ with tabs[0]:
             st.markdown("**Colormap**: Selects the color scheme (viridis, plasma, inferno) for the slope map. Choose based on preference for visualizing slope variation.")
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
             
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the slope map for context. Useful for identifying erosion risks in burned regions.")
+            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the slope map for context. Useful for identifying erosion risks in burned regions. Changes update dynamically.")
             if 'show_burned_slope' not in st.session_state:
                 st.session_state.show_burned_slope = False
             show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_slope, key="slope_burned", on_change=lambda: st.session_state.update(show_burned_slope=not st.session_state.show_burned_slope))
@@ -458,14 +470,17 @@ with tabs[0]:
                 st.session_state.burn_alpha_slope = 0.5
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_slope, 0.1, key="slope_alpha", on_change=lambda x: st.session_state.update(burn_alpha_slope=x))
         
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, slope, slope_cmap, 
-            vmin=slope_vmin, vmax=slope_vmax,
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.markdown("**Slope Map**: Shows terrain slope in degrees (0–90°), with steeper areas indicating higher runoff and erosion potential. Use sliders to adjust the range and colormap for better visualization.")
-        st.pyplot(fig)
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            slope = st.session_state.processed_data['slope']
+            burned_mask = st.session_state.processed_data['burned_mask']
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, slope, slope_cmap, 
+                vmin=slope_vmin, vmax=slope_vmax,
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.markdown("**Slope Map**: Shows terrain slope in degrees (0–90°), with steeper areas indicating higher runoff and erosion potential. Use sliders to adjust the range and colormap for better visualization.")
+            st.pyplot(fig)
 
     # Aspect Map tab
     with tabs[3]:
@@ -483,7 +498,7 @@ with tabs[0]:
             st.markdown("**Colormap**: Selects the color scheme (twilight, hsv) for the aspect map. Choose based on preference for visualizing flow direction.")
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
             
-            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the aspect map for context. Useful for identifying flow paths in burned regions.")
+            st.markdown("**Show Burned Areas Overlay**: Toggle to overlay burned areas (red) on the aspect map for context. Useful for identifying flow paths in burned regions. Changes update dynamically.")
             if 'show_burned_aspect' not in st.session_state:
                 st.session_state.show_burned_aspect = False
             show_burned = st.checkbox("Show Burned Areas Overlay", value=st.session_state.show_burned_aspect, key="aspect_burned", on_change=lambda: st.session_state.update(show_burned_aspect=not st.session_state.show_burned_aspect))
@@ -493,14 +508,17 @@ with tabs[0]:
                 st.session_state.burn_alpha_aspect = 0.5
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_aspect, 0.1, key="aspect_alpha", on_change=lambda x: st.session_state.update(burn_alpha_aspect=x))
         
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, aspect, aspect_cmap, 
-            vmin=aspect_vmin, vmax=aspect_vmax,
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.markdown("**Aspect Map**: Shows terrain aspect in degrees (0–360°), indicating flow direction. Use sliders to adjust range and colormap for better visualization.")
-        st.pyplot(fig)
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            aspect = st.session_state.processed_data['aspect']
+            burned_mask = st.session_state.processed_data['burned_mask']
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, aspect, aspect_cmap, 
+                vmin=aspect_vmin, vmax=aspect_vmax,
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.markdown("**Aspect Map**: Shows terrain aspect in degrees (0–360°), indicating flow direction. Use sliders to adjust range and colormap for better visualization.")
+            st.pyplot(fig)
 
     # Retention Time tab
     with tabs[4]:
@@ -508,11 +526,13 @@ with tabs[0]:
         st.markdown("### This tab estimates how long water is retained in the watershed.")
         st.markdown("**Instructions**: Retention time depends on storage volume, runoff, and rainfall. If 'No effective runoff,' increase rainfall, runoff coefficient, or area in 'DEM & Flow Simulation'.")
         
-        if retention_time is not None:
-            st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
-            st.markdown("**Retention Time**: Indicates how long water is held before draining, based on storage volume and runoff. Higher storage or lower runoff increases retention; adjust parameters to test scenarios.")
-        else:
-            st.write("No effective runoff → Retention time not applicable.")
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            retention_time = st.session_state.processed_data['retention_time']
+            if retention_time is not None:
+                st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
+                st.markdown("**Retention Time**: Indicates how long water is held before draining, based on storage volume and runoff. Higher storage or lower runoff increases retention; adjust parameters to test scenarios.")
+            else:
+                st.write("No effective runoff → Retention time not applicable.")
 
     # GeoTIFF Export tab
     with tabs[5]:
@@ -525,7 +545,10 @@ with tabs[0]:
         st.header("Nutrient Leaching")
         st.markdown("### This tab estimates nutrient leaching from soil due to erosion and runoff.")
         st.markdown("**Instructions**: Adjust soil nutrient, retention, and erosion factors. If the load seems too low or high, increase soil nutrient or erosion factor, or decrease retention to reflect post-fire conditions.")
-        st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
+        
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            nutrient_load = st.session_state.processed_data['nutrient_load']
+            st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
     # Flow Accumulation tab
     with tabs[7]:
@@ -544,13 +567,16 @@ with tabs[0]:
                 st.session_state.burn_alpha_flow = 0.5
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_flow, 0.1, key="flow_alpha", on_change=lambda x: st.session_state.update(burn_alpha_flow=x))
         
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, flow_acc, 'Blues',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.markdown("**Flow Accumulation Map**: Shows water accumulation (arbitrary units). Higher values indicate areas receiving more flow; adjust DEM parameters for variability.")
-        st.pyplot(fig)
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            flow_acc = st.session_state.processed_data['flow_acc']
+            burned_mask = st.session_state.processed_data['burned_mask']
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, flow_acc, 'Blues',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.markdown("**Flow Accumulation Map**: Shows water accumulation (arbitrary units). Higher values indicate areas receiving more flow; adjust DEM parameters for variability.")
+            st.pyplot(fig)
 
     # TWI tab
     with tabs[8]:
@@ -569,13 +595,16 @@ with tabs[0]:
                 st.session_state.burn_alpha_twi = 0.5
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_twi, 0.1, key="twi_alpha", on_change=lambda x: st.session_state.update(burn_alpha_twi=x))
         
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, twi, 'RdYlBu',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.markdown("**Topographic Wetness Index Map**: Shows wetness potential, with higher values (yellow-red) indicating wetter areas. Adjust slope and flow parameters for variability.")
-        st.pyplot(fig)
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            twi = st.session_state.processed_data['twi']
+            burned_mask = st.session_state.processed_data['burned_mask']
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, twi, 'RdYlBu',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.markdown("**Topographic Wetness Index Map**: Shows wetness potential, with higher values (yellow-red) indicating wetter areas. Adjust slope and flow parameters for variability.")
+            st.pyplot(fig)
 
     # Curvature tab
     with tabs[9]:
@@ -594,13 +623,16 @@ with tabs[0]:
                 st.session_state.burn_alpha_curv = 0.5
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, st.session_state.burn_alpha_curv, 0.1, key="curv_alpha", on_change=lambda x: st.session_state.update(burn_alpha_curv=x))
         
-        fig, ax = plt.subplots()
-        plot_with_burned_overlay(
-            ax, curvature, 'Spectral',
-            burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
-        )
-        st.markdown("**Curvature Map**: Shows terrain curvature (positive=convex, negative=concave). Adjust DEM parameters to enhance variability.")
-        st.pyplot(fig)
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
+            curvature = st.session_state.processed_data['curvature']
+            burned_mask = st.session_state.processed_data['burned_mask']
+            fig, ax = plt.subplots()
+            plot_with_burned_overlay(
+                ax, curvature, 'Spectral',
+                burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
+            )
+            st.markdown("**Curvature Map**: Shows terrain curvature (positive=convex, negative=concave). Adjust DEM parameters to enhance variability.")
+            st.pyplot(fig)
 
     # Scenario GIFs tab
     with tabs[10]:
@@ -645,7 +677,11 @@ with tabs[0]:
             1.0, 5.0, 2.0, 0.1
         )
 
-        if burned_mask is not None:
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+            grid_z = st.session_state.processed_data['grid_z']
+            slope = st.session_state.processed_data['slope']
+            burned_mask = st.session_state.processed_data['burned_mask']
+
             # Ensure shape compatibility
             if burned_mask.shape != grid_z.shape:
                 st.error(f"Burned mask shape {burned_mask.shape} does not match DEM shape {grid_z.shape}. Adjusting mask size.")
@@ -761,7 +797,15 @@ with tabs[0]:
         st.markdown("### This tab compares hydrological parameters between burned and unburned areas.")
         st.markdown("**Instructions**: If no comparison appears, ensure a burned-area TIFF is uploaded and shows variation. Adjust parameters in other tabs to enhance differences.")
         
-        if burned_mask is not None:
+        if 'processed_data' in st.session_state and st.session_state.processed_data is not None and st.session_state.processed_data['burned_mask'] is not None:
+            grid_z = st.session_state.processed_data['grid_z']
+            slope = st.session_state.processed_data['slope']
+            aspect = st.session_state.processed_data['aspect']
+            flow_acc = st.session_state.processed_data['flow_acc']
+            twi = st.session_state.processed_data['twi']
+            curvature = st.session_state.processed_data['curvature']
+            burned_mask = st.session_state.processed_data['burned_mask']
+
             params = {
                 "Elevation (m)": grid_z,
                 "Slope (degrees)": slope,
@@ -795,3 +839,26 @@ with tabs[0]:
 
 else:
     st.info("Please upload an STL file and click 'Run Analysis' to begin.")
+
+# Helper function for plotting with burned area overlay
+def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, 
+                            burned_mask=None, show_burned=True, alpha=0.5):
+    # Flip data vertically to correct orientation (north up)
+    data = np.flipud(data)
+    if burned_mask is not None and show_burned:
+        burned_mask = np.flipud(burned_mask)
+    
+    im = ax.imshow(data, cmap=cmap, origin='upper',  # Changed to 'upper' for correct orientation
+                   extent=(left_bound, right_bound, bottom_bound, top_bound),
+                   vmin=vmin, vmax=vmax)
+    if show_burned and burned_mask is not None:
+        burned_cmap = ListedColormap(['none', 'red'])
+        ax.imshow(burned_mask, cmap=burned_cmap, origin='upper',
+                  extent=(left_bound, right_bound, bottom_bound, top_bound),
+                  alpha=alpha)
+    aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound)
+    aspect_ratio *= (meters_per_deg_lat / meters_per_deg_lon)
+    ax.set_aspect(aspect_ratio)
+    ax.set_xlabel('Longitude (°E)')
+    ax.set_ylabel('Latitude (°N)')
+    return im
