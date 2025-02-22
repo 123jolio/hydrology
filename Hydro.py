@@ -278,7 +278,6 @@ if uploaded_stl and run_button:
                             burned_mask = resampled_mask
                         else:
                             st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
-                            # Fallback: Resize mask to match DEM shape using scipy.ndimage.zoom
                             zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
                             burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
 
@@ -532,6 +531,7 @@ if uploaded_stl and run_button:
                 zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
                 burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
 
+            # Infiltration and Erosion Maps
             infiltration_map = np.full_like(grid_z, base_infiltration)
             infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
             infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
@@ -543,6 +543,17 @@ if uploaded_stl and run_button:
             total_erosion_burned = np.sum(erosion_map[burned_mask == 1]) * (area_per_cell_m2 / 10000)
             total_erosion = total_erosion_unburned + total_erosion_burned
 
+            # Combined Effect Maps
+            # Runoff Potential Map: Higher slope and burned areas increase runoff
+            runoff_potential = runoff_val * (1 + slope / slope.max())  # Base runoff scaled by normalized slope
+            runoff_potential[burned_mask == 1] *= (1 + burn_factor_val)  # Increase in burned areas
+            runoff_potential = np.clip(runoff_potential, 0, 1)  # Ensure within [0, 1]
+
+            # Erosion Risk Map: Higher slope and burned areas increase erosion risk
+            erosion_risk = base_erosion_rate * (1 + slope / slope.max())  # Base erosion scaled by normalized slope
+            erosion_risk[burned_mask == 1] *= erosion_multiplier_burned  # Increase in burned areas
+
+            # Display statistics
             st.write(f"**Runoff from Unburned Areas:** {V_runoff_unburned:.2f} m³")
             st.write(f"**Runoff from Burned Areas:** {V_runoff_burned:.2f} m³")
             st.write(f"**Total Runoff:** {V_runoff:.2f} m³")
@@ -550,6 +561,7 @@ if uploaded_stl and run_button:
             st.write(f"**Erosion from Burned Areas:** {total_erosion_burned:.2f} tons")
             st.write(f"**Total Erosion:** {total_erosion:.2f} tons (adjusted for cell area)")
 
+            # Infiltration Map
             st.subheader("Infiltration Map (mm/hr)")
             fig, ax = plt.subplots()
             im = ax.imshow(
@@ -563,6 +575,7 @@ if uploaded_stl and run_button:
             fig.colorbar(im, ax=ax, label="Infiltration Rate (mm/hr)")
             st.pyplot(fig)
 
+            # Erosion Map
             st.subheader("Erosion Map (tons/ha)")
             fig, ax = plt.subplots()
             im = ax.imshow(
@@ -575,11 +588,39 @@ if uploaded_stl and run_button:
             fig.colorbar(im, ax=ax, label="Erosion Rate (tons/ha)")
             st.pyplot(fig)
 
+            # Runoff Potential Map
+            st.subheader("Runoff Potential Map (Normalized)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(
+                runoff_potential, cmap='Blues', origin='lower',
+                extent=(left_bound, right_bound, bottom_bound, top_bound),
+                vmin=0, vmax=1
+            )
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Runoff Potential (0-1)")
+            st.pyplot(fig)
+
+            # Erosion Risk Map
+            st.subheader("Erosion Risk Map (tons/ha)")
+            fig, ax = plt.subplots()
+            im = ax.imshow(
+                erosion_risk, cmap='YlOrRd', origin='lower',
+                extent=(left_bound, right_bound, bottom_bound, top_bound)
+            )
+            ax.set_aspect(aspect_ratio)
+            ax.set_xlabel('Longitude (°E)')
+            ax.set_ylabel('Latitude (°N)')
+            fig.colorbar(im, ax=ax, label="Erosion Risk (tons/ha)")
+            st.pyplot(fig)
+
             st.info("""
             **Interpretation**:  
-            - Infiltration is reduced in burned areas, increasing runoff.  
-            - Erosion is higher in burned areas due to less vegetation.  
-            - Runoff and erosion are split to show contributions from burned vs. unburned areas.
+            - **Infiltration Map**: Lower values in burned areas indicate reduced infiltration.  
+            - **Erosion Map**: Higher values in burned areas reflect increased soil loss.  
+            - **Runoff Potential Map**: Combines slope and burned areas; higher values indicate greater runoff likelihood.  
+            - **Erosion Risk Map**: Combines slope and burned areas; higher values indicate greater erosion risk.  
             """)
         else:
             st.write(f"**Total Runoff:** {V_runoff:.2f} m³")
