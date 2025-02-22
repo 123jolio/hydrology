@@ -115,7 +115,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Optionally, display a logo on the left (if available)
+# Optionally, display a logo (if available)
 try:
     st.image("logo.png", width=200)
 except Exception:
@@ -363,21 +363,29 @@ if uploaded_stl is not None:
         "Curvature Analysis", "Scenario GIFs"
     ])
 
+    # Helper function to create a figure and axis with proper aspect ratio
+    def create_fig_ax():
+        spatial_width = right_bound - left_bound
+        spatial_height = top_bound - bottom_bound
+        aspect_ratio = spatial_height / spatial_width
+        fig, ax = plt.subplots(figsize=(8, 8 * aspect_ratio))
+        return fig, ax
+
     # Helper function to overlay burned mask if available
     def overlay_burned(ax):
         if burned_mask is not None:
             ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
                       origin='lower', cmap="Reds", alpha=burned_transparency)
 
-    # Tab 0: DEM heatmap with flow simulation overlay
+    # Tab 0: DEM with Flow Simulation
     with tabs[0]:
         with st.expander("DEM Legend Boundaries"):
             dem_vmin = st.number_input("DEM Minimum (m)", value=global_dem_min, step=1.0)
             dem_vmax = st.number_input("DEM Maximum (m)", value=global_dem_max, step=1.0)
         st.subheader("DEM (Adjusted Elevation) with Flow Simulation")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(grid_z, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax, aspect='auto')
+                       origin='lower', cmap='hot', vmin=dem_vmin, vmax=dem_vmax)
         step = max(1, global_grid_res // 20)
         ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                   -dz_dx[::step, ::step], -dz_dy[::step, ::step],
@@ -386,7 +394,8 @@ if uploaded_stl is not None:
         ax.set_title("DEM with Flow Overlay")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Elevation (m)")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 1: Slope Map
@@ -397,14 +406,15 @@ if uploaded_stl is not None:
         with st.expander("Colormap Options"):
             slope_cmap = st.selectbox("Select Slope Colormap", ["viridis", "plasma", "inferno", "magma"])
         st.subheader("Slope Map (Degrees)")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax, aspect='auto')
+                       origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
         overlay_burned(ax)
         ax.set_title("Slope (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Slope (°)")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 2: Aspect Map
@@ -415,14 +425,15 @@ if uploaded_stl is not None:
         with st.expander("Colormap Options"):
             aspect_cmap = st.selectbox("Select Aspect Colormap", ["twilight", "hsv", "cool"])
         st.subheader("Aspect Map (Degrees)")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, aspect='auto')
+                       origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
         overlay_burned(ax)
         ax.set_title("Aspect (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Aspect (°)")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 3: Retention Time
@@ -475,14 +486,15 @@ if uploaded_stl is not None:
             flowacc_vmin = st.number_input("Flow Accumulation Min", value=float(np.min(adjusted_flow_acc)), step=1.0)
             flowacc_vmax = st.number_input("Flow Accumulation Max", value=float(np.max(adjusted_flow_acc)), step=1.0)
         st.subheader("Flow Accumulation Map")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax, aspect='auto')
+                       origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax)
         overlay_burned(ax)
         ax.set_title("Flow Accumulation (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Accumulated Flow")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 7: Topographic Wetness Index (TWI)
@@ -491,14 +503,15 @@ if uploaded_stl is not None:
             twi_vmin = st.number_input("TWI Minimum", value=float(np.min(twi)), step=0.1)
             twi_vmax = st.number_input("TWI Maximum", value=float(np.max(twi)), step=0.1)
         st.subheader("Topographic Wetness Index (TWI)")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(twi, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax, aspect='auto')
+                       origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax)
         overlay_burned(ax)
         ax.set_title("TWI (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="TWI")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 8: Curvature Analysis
@@ -507,14 +520,15 @@ if uploaded_stl is not None:
             curv_vmin = st.number_input("Curvature Minimum", value=float(np.min(curvature)), step=0.1)
             curv_vmax = st.number_input("Curvature Maximum", value=float(np.max(curvature)), step=0.1)
         st.subheader("Curvature Analysis")
-        fig, ax = plt.subplots(figsize=(6,4))
+        fig, ax = create_fig_ax()
         im = ax.imshow(curvature, extent=(left_bound, right_bound, bottom_bound, top_bound),
-                       origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax, aspect='auto')
+                       origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax)
         overlay_burned(ax)
         ax.set_title("Curvature (Laplacian Convolution)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        fig.colorbar(im, ax=ax, label="Curvature")
+        ax.set_aspect('equal', adjustable='box')
+        fig.tight_layout()
         st.pyplot(fig)
 
     # Tab 9: Scenario GIFs
