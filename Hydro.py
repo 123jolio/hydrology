@@ -236,7 +236,7 @@ if uploaded_stl and run_button:
     nutrient_load = nutrient * (1 - retention) * erosion * area
 
     # Burned area processing with adjustable low threshold
-    burned_mask = 15
+    burned_mask = 75
     if uploaded_burned:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
             tmp_tif.write(uploaded_burned.read())
