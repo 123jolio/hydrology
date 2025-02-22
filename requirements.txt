@@ -19,6 +19,5 @@ openpyxl
 streamlit-drawable-canvas
 numpy-stl
 fastkml
-streamlit-stl-viewer
 imageio
 Pillow
