@@ -7,7 +7,6 @@ import tempfile
 import io
 import rasterio
 from rasterio.transform import from_origin
-from rasterio.warp import reproject, Resampling
 import imageio
 import os
 from PIL import Image
@@ -152,7 +151,7 @@ with tabs[0]:
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")  # Default threshold set to 240
 
 # Nutrient Leaching Tab
 with tabs[6]:
@@ -258,21 +257,6 @@ if uploaded_stl and run_button:
                         burned_mask = (red > burn_threshold).astype(np.float32)
                         # Optionally, add color-based check for robustness
                         # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
-                        # Resample burned_mask to match grid_z shape if necessary
-                        if burned_mask.shape != grid_z.shape:
-                            st.write(f"Resampling burned_mask from {burned_mask.shape} to {grid_z.shape}")
-                            resampled_mask = np.zeros_like(grid_z, dtype=np.float32)
-                            reproject(
-                                source=burned_mask,
-                                destination=resampled_mask,
-                                src_transform=src.transform,
-                                src_crs=src.crs,
-                                dst_transform=from_origin(left_bound, top_bound, dx, dy),
-                                dst_crs="EPSG:4326",
-                                resampling=Resampling.nearest
-                            )
-                            burned_mask = resampled_mask
-                        st.write(f"Burned mask shape: {burned_mask.shape}, Min: {burned_mask.min()}, Max: {burned_mask.max()}")
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
             burned_mask = None
@@ -283,29 +267,20 @@ if uploaded_stl and run_button:
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # Plotting with correct orientation and aspect ratio, including burned area overlay option
-    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=False, alpha=0.5):
-        try:
-            # Plot the main data
-            im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
-            # Overlay burned areas if requested and available
-            if show_burned and burned_mask is not None:
-                if burned_mask.shape != data.shape:
-                    st.warning(f"Shape mismatch: Burned mask ({burned_mask.shape}) does not match data ({data.shape}). Skipping overlay.")
-                    return im
-                # Ensure burned_mask is binary (0 or 1)
-                burned_mask = burned_mask.astype(bool).astype(np.float32)
-                # Create a colormap for burned areas (red for 1, transparent for 0)
-                burned_cmap = ListedColormap(['none', 'red'])
-                ax.imshow(burned_mask, cmap=burned_cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), alpha=alpha)
-            # Set aspect ratio for geographical accuracy
-            aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
-            ax.set_aspect(aspect_ratio)
-            ax.set_xlabel('Longitude (°E)')
-            ax.set_ylabel('Latitude (°N)')
-            return im
-        except Exception as e:
-            st.error(f"Error plotting with burned overlay: {e}")
-            return None
+    def plot_with_burned_overlay(ax, data, cmap, vmin=None, vmax=None, burned_mask=None, show_burned=True, alpha=0.5):
+        # Plot the main data
+        im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
+        # Overlay burned areas if requested and available
+        if show_burned and burned_mask is not None:
+            # Create a colormap for burned areas (red for 1, transparent for 0)
+            burned_cmap = ListedColormap(['none', 'red'])
+            ax.imshow(burned_mask, cmap=burned_cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), alpha=alpha)
+        # Set aspect ratio for geographical accuracy
+        aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
+        ax.set_aspect(aspect_ratio)
+        ax.set_xlabel('Longitude (°E)')
+        ax.set_ylabel('Latitude (°N)')
+        return im
 
     with tabs[0]:  # DEM & Flow Simulation
         st.header("DEM & Flow Simulation")
@@ -313,13 +288,12 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="dem_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="dem_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            step = max(1, grid_res // 20)
-            ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
-                      -dz_dx[::step, ::step], -dz_dy[::step, ::step],
-                      color='blue', scale=1e5, width=0.0025)
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        step = max(1, grid_res // 20)
+        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
+                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+                  color='blue', scale=1e5, width=0.0025)
+        st.pyplot(fig)
 
     with tabs[1]:  # Burned Areas
         st.header("Burned Areas")
@@ -347,9 +321,8 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="slope_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="slope_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        st.pyplot(fig)
 
     with tabs[3]:  # Aspect Map
         st.header("Aspect Map")
@@ -360,9 +333,8 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="aspect_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="aspect_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        st.pyplot(fig)
 
     with tabs[4]:  # Retention Time
         st.subheader("Retention Time")
@@ -384,9 +356,8 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="flow_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="flow_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, flow_acc, 'Blues', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, flow_acc, 'Blues', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        st.pyplot(fig)
 
     with tabs[8]:  # TWI
         st.header("Topographic Wetness Index")
@@ -394,9 +365,8 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="twi_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="twi_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, twi, 'RdYlBu', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, twi, 'RdYlBu', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        st.pyplot(fig)
 
     with tabs[9]:  # Curvature
         st.header("Curvature Analysis")
@@ -404,9 +374,8 @@ if uploaded_stl and run_button:
             show_burned = st.checkbox("Show Burned Areas Overlay", value=False, key="curv_burned")
             burn_alpha = st.slider("Burned Areas Transparency", 0.0, 1.0, 0.5, 0.1, key="curv_alpha")
         fig, ax = plt.subplots()
-        im = plot_with_burned_overlay(ax, curvature, 'Spectral', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
-        if im is not None:
-            st.pyplot(fig)
+        plot_with_burned_overlay(ax, curvature, 'Spectral', burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha)
+        st.pyplot(fig)
 
     with tabs[10]:  # Scenario GIFs
         st.write("GIF generation to be implemented.")
