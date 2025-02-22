@@ -205,7 +205,7 @@ if uploaded_stl and run_button:
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res)
-    yi = np.linspace(bottom_bound, top_bound, grid_res)  # Fixed typo: replaced custom_bound with bottom_bound
+    yi = np.linspace(bottom_bound, top_bound, grid_res)  # Fixed typo: custom_bound -> bottom_bound
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
@@ -250,11 +250,9 @@ if uploaded_stl and run_button:
                     else:
                         red = src.read(1)
                         burned_mask = (red > burn_threshold).astype(np.float32)
-                        # Define CRS (assume WGS84 if not specified)
                         src_crs = src.crs if src.crs else CRS.from_epsg(4326)
-                        # Define destination transform and CRS for DEM grid
                         transform = from_origin(left_bound - dx/2, top_bound + dy/2, dx, -dy)
-                        dst_crs = CRS.from_epsg(4326)  # WGS84
+                        dst_crs = CRS.from_epsg(4326)
                         burned_mask_resampled = np.zeros((grid_res, grid_res), dtype=np.float32)
                         reproject(
                             source=burned_mask,
@@ -276,17 +274,22 @@ if uploaded_stl and run_button:
     else:
         st.write("No burned area data uploaded; using uniform runoff coefficient.")
 
-    # Flow accumulation using pysheds
-    grid = pysheds.Grid.from_raster(np.flipud(grid_z), 
-                                    affine=from_origin(left_bound, top_bound, dx, -dy),
-                                    shape=(grid_res, grid_res),
-                                    crs=CRS.from_epsg(4326))
-    grid.fill_depressions(data='raster', out_name='flooded_dem')
-    grid.resolve_flats(data='flooded_dem', out_name='inflated_dem')
-    grid.flowdir(data='inflated_dem', out_name='fdir')
-    grid.accumulation(data='fdir', out_name='flow_acc')
-    flow_acc = grid.flow_acc
-    flow_acc_to_plot = np.flipud(flow_acc)  # Flip back for plotting consistency
+    # Flow accumulation using pysheds with temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_dem:
+        transform = from_origin(left_bound, top_bound, dx, -dy)
+        with rasterio.open(
+            tmp_dem.name, 'w', driver='GTiff', height=grid_res, width=grid_res,
+            count=1, dtype=grid_z.dtype, crs=CRS.from_epsg(4326), transform=transform
+        ) as dst:
+            dst.write(np.flipud(grid_z), 1)
+        grid = pysheds.Grid.from_raster(tmp_dem.name)
+        grid.fill_depressions(data='raster', out_name='flooded_dem')
+        grid.resolve_flats(data='flooded_dem', out_name='inflated_dem')
+        grid.flowdir(data='inflated_dem', out_name='fdir')
+        grid.accumulation(data='fdir', out_name='flow_acc')
+        flow_acc = grid.flow_acc
+        flow_acc_to_plot = np.flipud(flow_acc)  # Flip back for plotting consistency
+    os.unlink(tmp_dem.name)  # Clean up temporary file
 
     # Flood risk map
     risk_map = flow_acc * runoff_coeff_grid
