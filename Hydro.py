@@ -12,52 +12,109 @@ import os
 from PIL import Image
 from scipy.ndimage import convolve
 
-# Set page config for a wide layout
-st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide")
+# Set page config for a wide layout and dark theme
+st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
 
-# Microsoft Office-inspired CSS
+# Dark mode CSS with logo and header styling
 st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Segoe+UI&display=swap" rel="stylesheet">
-<style>
-html, body {
-    background-color: #F3F3F3;
-    font-family: "Segoe UI", sans-serif;
-    color: #333333;
-}
-.stButton>button {
-    background-color: #005A9E;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 6px 12px;
-}
-.stTabs > div {
-    background-color: #E6E6E6;
-    border-bottom: 2px solid #005A9E;
-}
-.stTabs button {
-    background-color: #E6E6E6;
-    color: #333333;
-    border: none;
-    padding: 8px 16px;
-    font-weight: bold;
-}
-.stTabs button:hover {
-    background-color: #D0D0D0;
-}
-.stTabs .stTab--active {
-    background-color: #FFFFFF;
-    border-bottom: 2px solid #005A9E;
-    color: #005A9E;
-}
-.ribbon {
-    background-color: #FFFFFF;
-    padding: 10px;
-    border-bottom: 1px solid #D0D0D0;
-    display: flex;
-    gap: 20px;
-}
-</style>
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI&display=swap');
+
+    /* Dark mode base styles */
+    html, body, [class*="css"] {
+        background-color: #1E1E1E !important;
+        color: #E0E0E0 !important;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    /* Header and logo container */
+    .header-container {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        background-color: #2D2D2D;
+        border-bottom: 1px solid #444;
+    }
+    .header-container img {
+        width: 50px;
+        margin-right: 15px;
+    }
+    .header-container h1 {
+        font-size: 24px;
+        color: #FFFFFF;
+        margin: 0;
+    }
+
+    /* Ribbon toolbar */
+    .ribbon {
+        background-color: #2D2D2D;
+        padding: 10px;
+        border-bottom: 1px solid #444;
+        display: flex;
+        gap: 20px;
+    }
+    .ribbon button {
+        background-color: #005A9E;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 6px 12px;
+    }
+
+    /* Tabs styling */
+    .stTabs > div {
+        background-color: #2D2D2D;
+        border-bottom: 2px solid #005A9E;
+    }
+    .stTabs button {
+        background-color: #2D2D2D;
+        color: #E0E0E0;
+        border: none;
+        padding: 8px 16px;
+        font-weight: bold;
+    }
+    .stTabs button:hover {
+        background-color: #3A3A3A;
+    }
+    .stTabs .stTab--active {
+        background-color: #1E1E1E;
+        border-bottom: 2px solid #005A9E;
+        color: #FFFFFF;
+    }
+
+    /* Expander and widget styling */
+    .streamlit-expanderHeader {
+        background-color: #2D2D2D;
+        color: #E0E0E0;
+    }
+    .streamlit-expanderContent {
+        background-color: #1E1E1E;
+    }
+    .stSlider > div > div > div > div {
+        background-color: #005A9E;
+    }
+    .stNumberInput input {
+        background-color: #333333;
+        color: #E0E0E0;
+    }
+    .stSelectbox > div > div {
+        background-color: #333333;
+        color: #E0E0E0;
+    }
+
+    /* Plot styling */
+    .matplotlib-figure {
+        background-color: #1E1E1E;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Header with logo and title
+st.markdown("""
+    <div class="header-container">
+        <img src="https://via.placeholder.com/50" alt="Logo">
+        <h1>Advanced Hydrogeology & DEM Analysis</h1>
+    </div>
 """, unsafe_allow_html=True)
 
 # Ribbon Toolbar
