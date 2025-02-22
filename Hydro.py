@@ -7,11 +7,13 @@ import tempfile
 import io
 import rasterio
 from rasterio.transform import from_origin
+from rasterio.warp import reproject, Resampling
 import imageio
 import os
 from PIL import Image
 from scipy.ndimage import convolve
 from matplotlib.colors import ListedColormap
+import pysheds.grid as pysheds
 
 # Set page config for a wide layout and dark theme
 st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
@@ -120,10 +122,10 @@ with st.container():
         run_button = st.button("Run Analysis")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Define tabs with "Burned Areas" included
+# Define tabs with "Flood Risk Map" added after "Burned Areas"
 tabs = st.tabs([
-    "DEM & Flow Simulation", "Burned Areas", "Slope Map", "Aspect Map", "Retention Time", "GeoTIFF Export",
-    "Nutrient Leaching", "Flow Accumulation", "TWI", "Curvature", "Scenario GIFs"
+    "DEM & Flow Simulation", "Burned Areas", "Flood Risk Map", "Slope Map", "Aspect Map", "Retention Time", 
+    "GeoTIFF Export", "Nutrient Leaching", "Flow Accumulation", "TWI", "Curvature", "Scenario GIFs"
 ])
 
 # Georeference bounds
@@ -148,10 +150,10 @@ with tabs[0]:
         storage = st.number_input("Storage Volume (m³)", value=5000.0, step=100.0, key="storage")
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")  # Set default threshold to 240
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")
 
 # Nutrient Leaching Tab
-with tabs[6]:
+with tabs[7]:
     st.header("Nutrient Leaching")
     with st.expander("Nutrient Leaching Parameters", expanded=True):
         nutrient = st.number_input("Soil Nutrient (kg/ha)", value=50.0, step=1.0, key="nutrient")
@@ -159,7 +161,7 @@ with tabs[6]:
         erosion = st.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05, key="erosion")
 
 # Scenario GIFs Tab
-with tabs[10]:
+with tabs[11]:
     st.header("Scenario GIFs")
     with st.expander("GIF Settings", expanded=True):
         gif_frames = st.number_input("GIF Frames", value=10, step=1, key="gif_frames")
@@ -202,7 +204,7 @@ if uploaded_stl and run_button:
     lon_raw = left_bound + (x_raw - x_min) * (right_bound - left_bound) / (x_max - x_min)
     lat_raw = bottom_bound + (y_raw - y_min) * (top_bound - bottom_bound) / (y_max - y_min)
     xi = np.linspace(left_bound, right_bound, grid_res)
-    yi = np.linspace(bottom_bound, top_bound, grid_res)
+    yi = np.linspace(bottom_bound, top_bound, grid_res)  # Note: custom_bound seems to be a typo; using bottom_bound
     grid_x, grid_y = np.meshgrid(xi, yi)
     grid_z = griddata((lon_raw, lat_raw), z_adj, (grid_x, grid_y), method='cubic')
     grid_z = np.clip(grid_z, dem_min, dem_max)
@@ -235,33 +237,55 @@ if uploaded_stl and run_button:
     # Nutrient leaching
     nutrient_load = nutrient * (1 - retention) * erosion * area
 
-    # Burned area processing for RGB TIFF with color-based detection
-    burned_mask = None
+    # Burned area processing and resampling
+    burned_mask_resampled = None
     if uploaded_burned:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_tif:
                 tmp_tif.write(uploaded_burned.read())
                 with rasterio.open(tmp_tif.name) as src:
-                    # Check if the TIFF has at least 3 bands (RGB)
                     if src.count < 3:
                         st.warning("The burned area TIFF must be an RGB image with 3 bands.")
                     else:
-                        # Read all three bands: Red (1), Green (2), Blue (3)
                         red = src.read(1)
-                        green = src.read(2)
-                        blue = src.read(3)
-                        # Detect burned areas (red regions: high red, low green/blue)
-                        # Using the adjustable threshold for red channel only to detect burned areas
                         burned_mask = (red > burn_threshold).astype(np.float32)
-                        # Optionally, add color-based check for robustness
-                        # burned_mask = ((red > 150) & (green < 100) & (blue < 100)).astype(np.float32)
+                        # Define destination transform for DEM grid
+                        transform = from_origin(left_bound - dx/2, top_bound + dy/2, dx, -dy)
+                        burned_mask_resampled = np.zeros((grid_res, grid_res), dtype=np.float32)
+                        reproject(
+                            source=burned_mask,
+                            destination=burned_mask_resampled,
+                            src_transform=src.transform,
+                            src_crs=src.crs,
+                            dst_transform=transform,
+                            dst_crs=src.crs,
+                            resampling=Resampling.nearest
+                        )
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
-            burned_mask = None
+            burned_mask_resampled = None
 
-    # Terrain derivatives (simplified)
-    flow_acc = np.ones_like(grid_z)  # Placeholder
-    twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
+    # Runoff coefficient grid
+    runoff_coeff_grid = np.full_like(grid_z, runoff)
+    if burned_mask_resampled is not None:
+        runoff_coeff_grid[burned_mask_resampled == 1] *= burn_factor
+    else:
+        st.write("No burned area data uploaded; using uniform runoff coefficient.")
+
+    # Flow accumulation using pysheds
+    grid = pysheds.Grid.from_array(np.flipud(grid_z), 
+                                   bbox=(left_bound, bottom_bound, right_bound, top_bound))
+    flooded_dem = grid.fill_depressions()
+    inflated_dem = grid.resolve_flats(flooded_dem)
+    fdir = grid.flowdir(inflated_dem)
+    flow_acc = grid.accumulation(fdir)
+    flow_acc_to_plot = np.flipud(flow_acc)  # Flip back for plotting consistency
+
+    # Flood risk map
+    risk_map = flow_acc * runoff_coeff_grid
+
+    # Terrain derivatives
+    twi = np.log((flow_acc_to_plot + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
     # Plotting with correct orientation and aspect ratio
@@ -284,23 +308,29 @@ if uploaded_stl and run_button:
 
     with tabs[1]:  # Burned Areas
         st.header("Burned Areas")
-        if burned_mask is not None:
+        if burned_mask_resampled is not None:
             fig, ax = plt.subplots()
-            # Reverse colormap: 0 = Burned (red), 1 = Non-burned (black)
             cmap = ListedColormap(['red', 'black'])
-            # Use origin='upper' to flip the plot upright
-            im = ax.imshow(burned_mask, cmap=cmap, origin='upper', extent=(left_bound, right_bound, bottom_bound, top_bound))
+            im = ax.imshow(burned_mask_resampled, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
             aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
             ax.set_aspect(aspect_ratio)
             ax.set_xlabel('Longitude (°E)')
             ax.set_ylabel('Latitude (°N)')
             cbar = fig.colorbar(im, ax=ax, ticks=[0, 1])
-            cbar.ax.set_yticklabels(['Burned', 'Non-burned'])  # Reversed labels
+            cbar.ax.set_yticklabels(['Non-burned', 'Burned'])
             st.pyplot(fig)
         else:
             st.write("No burned area data uploaded or TIFF processing failed.")
 
-    with tabs[2]:  # Slope Map
+    with tabs[2]:  # Flood Risk Map
+        st.header("Flood Risk Map")
+        st.write("Areas with higher values indicate increased flood risk due to burned areas and water accumulation.")
+        fig, ax = plt.subplots()
+        im = plot_with_correct_aspect(ax, risk_map, 'RdYlBu')
+        fig.colorbar(im, ax=ax, label='Flood Risk')
+        st.pyplot(fig)
+
+    with tabs[3]:  # Slope Map
         with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
             slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
@@ -310,7 +340,7 @@ if uploaded_stl and run_button:
         plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
         st.pyplot(fig)
 
-    with tabs[3]:  # Aspect Map
+    with tabs[4]:  # Aspect Map
         with st.expander("Visualization Options"):
             aspect_vmin = st.number_input("Aspect Min", value=0.0, key="aspect_vmin")
             aspect_vmax = st.number_input("Aspect Max", value=360.0, key="aspect_vmax")
@@ -320,39 +350,39 @@ if uploaded_stl and run_button:
         plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
         st.pyplot(fig)
 
-    with tabs[4]:  # Retention Time
+    with tabs[5]:  # Retention Time
         st.subheader("Retention Time")
         if retention_time is not None:
             st.write(f"Estimated Retention Time: {retention_time:.2f} hr")
         else:
             st.write("No effective runoff → Retention time not applicable.")
 
-    with tabs[5]:  # GeoTIFF Export
+    with tabs[6]:  # GeoTIFF Export
         st.subheader("GeoTIFF Export")
         st.write("Export functionality to be implemented.")
 
-    with tabs[6]:  # Nutrient Leaching
+    with tabs[7]:  # Nutrient Leaching
         st.write(f"Estimated Nutrient Load: {nutrient_load:.2f} kg")
 
-    with tabs[7]:  # Flow Accumulation
+    with tabs[8]:  # Flow Accumulation
         st.subheader("Flow Accumulation")
         fig, ax = plt.subplots()
-        plot_with_correct_aspect(ax, flow_acc, 'Blues')
+        plot_with_correct_aspect(ax, flow_acc_to_plot, 'Blues')
         st.pyplot(fig)
 
-    with tabs[8]:  # TWI
+    with tabs[9]:  # TWI
         st.subheader("Topographic Wetness Index")
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, twi, 'RdYlBu')
         st.pyplot(fig)
 
-    with tabs[9]:  # Curvature
+    with tabs[10]:  # Curvature
         st.subheader("Curvature Analysis")
         fig, ax = plt.subplots()
         plot_with_correct_aspect(ax, curvature, 'Spectral')
         st.pyplot(fig)
 
-    with tabs[10]:  # Scenario GIFs
+    with tabs[11]:  # Scenario GIFs
         st.write("GIF generation to be implemented.")
 
 else:
