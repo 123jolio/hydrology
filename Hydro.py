@@ -44,15 +44,6 @@ html, body, [class*="css"] {
     background-color: #2D2D2D;
     border-bottom: 1px solid #444;
 }
-.header-container img {
-    width: 50px;
-    margin-right: 15px;
-}
-.header-container h1 {
-    font-size: 24px;
-    color: #FFFFFF;
-    margin: 0;
-}
 .ribbon {
     background-color: #2D2D2D;
     padding: 10px;
@@ -114,14 +105,14 @@ html, body, [class*="css"] {
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. Header (logo + title)
+# 3. Header (logo + title) using st.image()
 # -----------------------------------------------------------------------------
-st.markdown("""
-<div class="header-container">
-    <img src="logo.png" alt="Logo">
-    <h1>Advanced Hydrogeology & DEM Analysis</h1>
-</div>
-""", unsafe_allow_html=True)
+# Use columns to display the logo and title side by side.
+col_logo, col_title = st.columns([1, 4])
+with col_logo:
+    st.image("logo.png", width=250)
+with col_title:
+    st.markdown("<h1 style='color: #FFFFFF;'>Advanced Hydrogeology & DEM Analysis</h1>", unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
 # 4. Ribbon Toolbar
@@ -451,9 +442,7 @@ if uploaded_stl and run_button:
     with tabs[10]:
         st.write("GIF generation to be implemented (placeholder).")
 
-    # -----------------------------------------------------------------------------
-    # 12. NEW: Burned-Area Hydro Impacts Tab
-    # -----------------------------------------------------------------------------
+    # Burned-Area Hydro Impacts tab
     with tabs[11]:
         st.header("Burned-Area Hydro Impacts")
 
@@ -465,7 +454,6 @@ if uploaded_stl and run_button:
         - **Nutrient & Ash Loading** in runoff → Potential water quality issues  
         """)
 
-        # Additional user inputs for advanced analysis
         st.subheader("Advanced Burned-Area Parameters")
         base_infiltration = st.number_input(
             "Base Infiltration Rate (mm/hr)", value=10.0, step=1.0, min_value=0.0
@@ -482,44 +470,27 @@ if uploaded_stl and run_button:
             1.0, 5.0, 2.0, 0.1
         )
 
-        # Compute infiltration map
         if burned_mask is not None:
-            # Convert rainfall to mm
             infiltration_map = np.full_like(grid_z, base_infiltration)
-            # Reduce infiltration in burned cells
             infiltration_map -= infiltration_map * infiltration_reduction * burned_mask
-            # The infiltration_map now has lower infiltration rates where burned_mask=1
-
-            # Potential infiltration volume over entire area
             infiltration_volume_total = (infiltration_map * rainfall_val * duration_val).sum()
 
-            # Erosion estimate (very simplified)
-            # Base erosion where burned_mask=0, multiplied by erosion_multiplier_burned where burned_mask=1
             erosion_map = np.full_like(grid_z, base_erosion_rate)
             erosion_map[burned_mask == 1] *= erosion_multiplier_burned
-            total_erosion = erosion_map.sum()  # Summed over the DEM
+            total_erosion = erosion_map.sum()
 
             st.write(f"**Infiltration Volume (mm * cell_area) over the domain:** ~{infiltration_volume_total:.2f} mm-hr equivalent")
             st.write(f"**Estimated Erosion (placeholder, sum of map):** {total_erosion:.2f} tons")
 
-            # Simple example of how infiltration might affect final runoff
-            # If infiltration is reduced, more water becomes surface runoff
-            # We can approximate a new effective runoff_coefficient
-            # ratio of infiltration to total rainfall
             infiltration_ratio = (infiltration_map.mean() / base_infiltration)
-            # We scale the original runoff_coefficient by (1 + burn_factor*(1 - infiltration_ratio)) as a placeholder
             new_runoff_coefficient = runoff_val + burn_factor_val * (1.0 - infiltration_ratio)
             new_runoff_coefficient = np.clip(new_runoff_coefficient, 0.0, 1.0)
             st.write(f"**Adjusted Runoff Coefficient** (approx): {new_runoff_coefficient:.2f}")
 
-            # Potential water-quality placeholder
-            # If infiltration is lower, more nutrients or ash are carried away
-            # We can assume a fraction of nutrient_load is multiplied by the fraction of burned area
-            burned_fraction = (burned_mask.mean())  # fraction of domain that is burned
-            nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)  # +30% for example
+            burned_fraction = (burned_mask.mean())
+            nutrient_load_burned = nutrient_load * (1.0 + burned_fraction * 0.3)
             st.write(f"**Potential Increase in Nutrient Load** due to burned area: from {nutrient_load:.2f} to ~{nutrient_load_burned:.2f} kg")
 
-            # Visualize infiltration map
             st.subheader("Infiltration Map (mm/hr)")
             fig, ax = plt.subplots()
             im = ax.imshow(
@@ -543,7 +514,6 @@ if uploaded_stl and run_button:
             - The simplified erosion map indicates how burned areas might accelerate soil loss.
             - Nutrient or ash loads can also increase if infiltration is reduced and runoff is higher.
             """)
-
         else:
             st.warning("No burned area detected or TIFF missing. Please upload a valid burned-area TIFF to see advanced impacts.")
 
