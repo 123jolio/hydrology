@@ -381,6 +381,7 @@ with tabs[0]:
                         'flow_acc': flow_acc,
                         'twi': twi,
                         'curvature': curvature,
+                        't': t,  # Store time array for hydrograph
                         'Q': Q,
                         'Q_unburned': Q_unburned,
                         'Q_burned': Q_burned,
@@ -403,27 +404,29 @@ with tabs[0]:
 
     # If data is processed, display results
     if 'processed_data' in st.session_state and st.session_state.processed_data is not None:
-        grid_z = st.session_state.processed_data['grid_z']
-        slope = st.session_state.processed_data['slope']
-        aspect = st.session_state.processed_data['aspect']
-        burned_mask = st.session_state.processed_data['burned_mask']
-        flow_acc = st.session_state.processed_data['flow_acc']
-        twi = st.session_state.processed_data['twi']
-        curvature = st.session_state.processed_data['curvature']
-        Q = st.session_state.processed_data['Q']
-        Q_unburned = st.session_state.processed_data['Q_unburned']
-        Q_burned = st.session_state.processed_data['Q_burned']
-        retention_time = st.session_state.processed_data['retention_time']
-        nutrient_load = st.session_state.processed_data['nutrient_load']
-        V_runoff_unburned = st.session_state.processed_data['V_runoff_unburned']
-        V_runoff_burned = st.session_state.processed_data['V_runoff_burned']
-        V_runoff = st.session_state.processed_data['V_runoff']
-        grid_x = st.session_state.processed_data['grid_x']
-        grid_y = st.session_state.processed_data['grid_y']
-        dz_dx = st.session_state.processed_data['dz_dx']
-        dz_dy = st.session_state.processed_data['dz_dy']
-        dem_min_val = st.session_state.processed_data['dem_min_val']
-        dem_max_val = st.session_state.processed_data['dem_max_val']
+        processed_data = st.session_state.processed_data
+        grid_z = processed_data['grid_z']
+        slope = processed_data['slope']
+        aspect = processed_data['aspect']
+        burned_mask = processed_data['burned_mask']
+        flow_acc = processed_data['flow_acc']
+        twi = processed_data['twi']
+        curvature = processed_data['curvature']
+        t = processed_data['t']  # Retrieve time array
+        Q = processed_data['Q']
+        Q_unburned = processed_data['Q_unburned']
+        Q_burned = processed_data['Q_burned']
+        retention_time = processed_data['retention_time']
+        nutrient_load = processed_data['nutrient_load']
+        V_runoff_unburned = processed_data['V_runoff_unburned']
+        V_runoff_burned = processed_data['V_runoff_burned']
+        V_runoff = processed_data['V_runoff']
+        grid_x = processed_data['grid_x']
+        grid_y = processed_data['grid_y']
+        dz_dx = processed_data['dz_dx']
+        dz_dy = processed_data['dz_dy']
+        dem_min_val = processed_data['dem_min_val']
+        dem_max_val = processed_data['dem_max_val']
 
         st.header("DEM & Flow Simulation")
         st.markdown("### This tab displays the Digital Elevation Model (DEM) and flow simulation results.")
@@ -444,7 +447,7 @@ with tabs[0]:
             burned_mask=burned_mask, show_burned=show_burned, alpha=burn_alpha
         )
         st.markdown("**DEM & Flow Visualization**: Shows the terrain elevation (m) with flow direction arrows (blue). Steeper slopes and burned areas affect flow paths; adjust parameters to see changes.")
-        step = max(1, grid_x.shape[0] // 20)  # Updated to use grid_x.shape[0]
+        step = max(1, grid_x.shape[0] // 20)
         ax.quiver(
             grid_x[::step, ::step], grid_y[::step, ::step],
             -dz_dx[::step, ::step], -dz_dy[::step, ::step],
