@@ -116,6 +116,9 @@ erosion_factor = st.sidebar.slider("Soil Erosion Factor", 0.0, 1.0, 0.3, 0.05)
 
 st.sidebar.header("Burned Area Effects")
 burn_runoff_factor = st.sidebar.slider("Burned Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1)
+# New options for overlaying the burned area TIFF:
+overlay_burned_option = st.sidebar.checkbox("Overlay Burned Area TIFF", value=True)
+burned_transparency = st.sidebar.slider("Burned Area Overlay Transparency", 0.0, 1.0, 0.3, 0.05)
 
 # -----------------------------------------------------------------------------
 # 7. Process STL and compute DEM and related maps
@@ -269,7 +272,6 @@ if uploaded_stl is not None:
     twi = np.log((A_eff + 1) / (np.tan(slope_radians) + epsilon))
 
     # ---- Improved Curvature Analysis using a Laplacian Convolution ----
-    # Create a 3x3 Laplacian kernel. If the grid is nearly square, we can approximate curvature as:
     laplacian_kernel = np.array([[1,  1, 1],
                                  [1, -8, 1],
                                  [1,  1, 1]]) / (dx_meters * dy_meters)
@@ -302,7 +304,7 @@ if uploaded_stl is not None:
     nutrient_placeholder = np.clip(aspect / 360.0, 0, 1)
 
     # -----------------------------------------------------------------------------
-    # 11. Display results in dedicated tabs
+    # 11. Display results in dedicated tabs with burned area overlay
     # -----------------------------------------------------------------------------
     tabs = st.tabs([
         "DEM & Flow Simulation", "Slope Map", "Aspect Map",
@@ -310,6 +312,12 @@ if uploaded_stl is not None:
         "Nutrient Leaching", "Flow Accumulation", "Topographic Wetness Index",
         "Curvature Analysis", "Scenario GIFs"
     ])
+
+    # Helper function to overlay the burned TIFF if the option is enabled
+    def overlay_burned(ax):
+        if overlay_burned_option and burned_mask is not None:
+            ax.imshow(burned_mask, extent=(left_bound, right_bound, bottom_bound, top_bound),
+                      origin='lower', cmap="Reds", alpha=burned_transparency)
 
     # Tab 0: DEM heatmap with flow simulation overlay
     with tabs[0]:
@@ -324,6 +332,7 @@ if uploaded_stl is not None:
         q = ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
                       -dz_dx[::step, ::step], -dz_dy[::step, ::step],
                       color='blue', scale=1e5, width=0.0025)
+        overlay_burned(ax)
         ax.set_title("DEM with Flow Overlay")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -341,6 +350,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(slope, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax, aspect='auto')
+        overlay_burned(ax)
         ax.set_title("Slope (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -358,6 +368,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(aspect, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, aspect='auto')
+        overlay_burned(ax)
         ax.set_title("Aspect (°)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -417,6 +428,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(adjusted_flow_acc, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='viridis', vmin=flowacc_vmin, vmax=flowacc_vmax, aspect='auto')
+        overlay_burned(ax)
         ax.set_title("Flow Accumulation (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -432,6 +444,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(twi, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='coolwarm', vmin=twi_vmin, vmax=twi_vmax, aspect='auto')
+        overlay_burned(ax)
         ax.set_title("TWI (Adjusted for Burned Areas)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
@@ -447,6 +460,7 @@ if uploaded_stl is not None:
         fig, ax = plt.subplots(figsize=(6,4))
         im = ax.imshow(curvature, extent=(left_bound, right_bound, bottom_bound, top_bound),
                        origin='lower', cmap='Spectral', vmin=curv_vmin, vmax=curv_vmax, aspect='auto')
+        overlay_burned(ax)
         ax.set_title("Curvature (Laplacian Convolution)")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
