@@ -140,7 +140,7 @@ tabs = st.tabs([
 # -----------------------------------------------------------------------------
 # 6. Georeference bounding box (EPSG:4326) and constants
 # -----------------------------------------------------------------------------
-left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.133509, 28.045764, 36.92337189
+left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
 avg_lat = (top_bound + bottom_bound) / 2.0
 meters_per_deg_lon = 111320 * math.cos(math.radians(avg_lat))
@@ -907,3 +907,4 @@ with tabs[12]:
             st.write("No data available for comparison. Ensure burned areas are detected in the TIFF.")
     else:
         st.write("No burned area data available for comparison. Upload a valid burned-area TIFF.")
+
