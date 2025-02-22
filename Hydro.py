@@ -280,12 +280,14 @@ if uploaded_stl and run_button:
         st.write("No burned area data uploaded; using uniform runoff coefficient.")
 
     # Flow accumulation using pysheds with temporary file
+    # Ensure grid_z is a float type to allow negative nodata value
+    grid_z = grid_z.astype(np.float32)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp_dem:
         transform = from_origin(left_bound, top_bound, dx, -dy)
         with rasterio.open(
             tmp_dem.name, 'w', driver='GTiff', height=grid_res, width=grid_res,
             count=1, dtype=grid_z.dtype, crs=CRS.from_epsg(4326), transform=transform,
-            nodata=-9999.0  # Explicitly set nodata as a float compatible with float64
+            nodata=-9999.0
         ) as dst:
             dst.write(np.flipud(grid_z), 1)
         grid = pysheds.Grid.from_raster(tmp_dem.name, nodata=-9999.0)
