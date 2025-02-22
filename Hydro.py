@@ -137,7 +137,7 @@ tabs = st.tabs([
     "Nutrient Leaching", "Flow Accumulation", "TWI", "Curvature", "Scenario GIFs"
 ])
 
-# Georeference bounds (example coordinates)
+# Georeference bounds
 left_bound, top_bound, right_bound, bottom_bound = 27.906069, 36.92337189, 28.045764, 36.133509
 
 # DEM & Flow Simulation Tab
@@ -227,7 +227,7 @@ if uploaded_stl and run_button:
     slope = np.degrees(np.arctan(np.sqrt(dz_dx**2 + dz_dy**2)))
     aspect = np.degrees(np.arctan2(dz_dy, -dz_dx)) % 360
 
-    # Flow simulation
+    # Flow simulation (simplified)
     area_m2 = area * 10000.0
     total_rain_m = (rainfall / 1000.0) * duration
     V_runoff = total_rain_m * area_m2 * runoff
@@ -258,20 +258,33 @@ if uploaded_stl and run_button:
     twi = np.log((flow_acc + 1) / (np.tan(np.radians(slope)) + 0.05))
     curvature = convolve(grid_z, np.ones((3, 3)) / 9, mode='reflect')
 
-    # Display in Tabs
+    # Plotting with correct orientation and aspect ratio
+    def plot_with_correct_aspect(ax, data, cmap, vmin=None, vmax=None):
+        im = ax.imshow(data, cmap=cmap, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound), vmin=vmin, vmax=vmax)
+        # Set aspect ratio for geographical accuracy
+        aspect_ratio = (right_bound - left_bound) / (top_bound - bottom_bound) * (meters_per_deg_lat / meters_per_deg_lon)
+        ax.set_aspect(aspect_ratio)
+        ax.set_xlabel('Longitude (°E)')
+        ax.set_ylabel('Latitude (°N)')
+        return im
+
     with tabs[0]:  # DEM & Flow Simulation
         fig, ax = plt.subplots()
-        ax.imshow(grid_z, cmap='terrain', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, grid_z, 'terrain', vmin=dem_min, vmax=dem_max)
+        step = max(1, grid_res // 20)
+        ax.quiver(grid_x[::step, ::step], grid_y[::step, ::step],
+                  -dz_dx[::step, ::step], -dz_dy[::step, ::step],
+                  color='blue', scale=1e5, width=0.0025)
         st.pyplot(fig)
 
     with tabs[1]:  # Slope Map
         with st.expander("Visualization Options"):
             slope_vmin = st.number_input("Slope Min", value=0.0, key="slope_vmin")
-            slope_vmax = st.number_input("Slope Max", value=70.0, key="slope_vmax")
+            slope_vmax = st.number_input("Slope Max", value=90.0, key="slope_vmax")
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
         st.subheader("Slope Map")
         fig, ax = plt.subplots()
-        ax.imshow(slope, cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, slope, slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
         st.pyplot(fig)
 
     with tabs[2]:  # Aspect Map
@@ -281,7 +294,7 @@ if uploaded_stl and run_button:
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
         st.subheader("Aspect Map")
         fig, ax = plt.subplots()
-        ax.imshow(aspect, cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, aspect, aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
         st.pyplot(fig)
 
     with tabs[3]:  # Retention Time
@@ -301,19 +314,19 @@ if uploaded_stl and run_button:
     with tabs[6]:  # Flow Accumulation
         st.subheader("Flow Accumulation")
         fig, ax = plt.subplots()
-        ax.imshow(flow_acc, cmap='Blues', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, flow_acc, 'Blues')
         st.pyplot(fig)
 
     with tabs[7]:  # TWI
         st.subheader("Topographic Wetness Index")
         fig, ax = plt.subplots()
-        ax.imshow(twi, cmap='RdYlBu', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, twi, 'RdYlBu')
         st.pyplot(fig)
 
     with tabs[8]:  # Curvature
         st.subheader("Curvature Analysis")
         fig, ax = plt.subplots()
-        ax.imshow(curvature, cmap='Spectral', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
+        plot_with_correct_aspect(ax, curvature, 'Spectral')
         st.pyplot(fig)
 
     with tabs[9]:  # Scenario GIFs
