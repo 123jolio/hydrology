@@ -110,7 +110,7 @@ html, body, [class*="css"] {
 # Use columns to display the logo and title side by side.
 col_logo, col_title = st.columns([1, 4])
 with col_logo:
-    st.image("logo.png", width=50)
+    st.image("logo.png", width=250)
 with col_title:
     st.markdown("<h1 style='color: #FFFFFF;'>Advanced Hydrogeology & DEM Analysis</h1>", unsafe_allow_html=True)
 
