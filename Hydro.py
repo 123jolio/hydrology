@@ -165,7 +165,7 @@ with tabs[0]:
 
     with st.expander("Burned Area Effects"):
         burn_factor = st.slider("Runoff Increase Factor", 0.0, 2.0, 1.0, 0.1, key="burn_factor")
-        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 240, 1, key="burn_threshold")
+        burn_threshold = st.slider("Burned Area Threshold", 0, 255, 200, 1, key="burn_threshold")  # Lowered threshold for testing
         band_to_threshold = st.selectbox("Band for Burned Area Threshold", ["Red", "Green", "Blue"], key="band_threshold")
 
 # -----------------------------------------------------------------------------
@@ -256,7 +256,10 @@ if uploaded_stl and run_button:
                     else:
                         band_index = 1 if band_to_threshold == "Red" else 2 if band_to_threshold == "Green" else 3
                         band_data = src.read(band_index)
+                        # Debug: Check the band data
+                        st.write(f"Band data max: {np.max(band_data)}, min: {np.min(band_data)}")
                         burned_mask = (band_data > burn_threshold_val).astype(np.float32)
+                        st.write(f"Burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
 
                         # Attempt reprojection if CRS is available
                         src_crs = src.crs
@@ -276,10 +279,12 @@ if uploaded_stl and run_button:
                                 resampling=Resampling.nearest
                             )
                             burned_mask = resampled_mask
+                            st.write(f"Reprojected burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
                         else:
                             st.warning("TIFF has no CRS. Resizing mask to match DEM shape (may be inaccurate).")
                             zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
                             burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
+                            st.write(f"Resized burned mask mean: {np.mean(burned_mask)}, shape: {burned_mask.shape}")
 
         except Exception as e:
             st.error(f"Error processing burned area TIFF: {e}")
@@ -535,6 +540,7 @@ if uploaded_stl and run_button:
                 st.error(f"Burned mask shape {burned_mask.shape} does not match DEM shape {grid_z.shape}. Adjusting mask size.")
                 zoom_factors = (grid_z.shape[0] / burned_mask.shape[0], grid_z.shape[1] / burned_mask.shape[1])
                 burned_mask = zoom(burned_mask, zoom_factors, order=0)  # Nearest neighbor
+                st.write(f"Adjusted burned mask shape: {burned_mask.shape}, mean: {np.mean(burned_mask)}")
 
             # Infiltration and Erosion Maps
             infiltration_map = np.full_like(grid_z, base_infiltration)
@@ -550,14 +556,16 @@ if uploaded_stl and run_button:
 
             # Combined Effect Maps
             # Runoff Potential Map: Higher slope and burned areas increase runoff
-            slope_normalized = slope / np.max(slope)  # Normalize slope to [0, 1]
-            runoff_potential = runoff_val * (1 + slope_normalized)  # Base runoff scaled by slope
+            slope_normalized = slope / np.max(slope, initial=0.1)  # Avoid division by zero, ensure variability
+            runoff_potential = runoff_val * (1 + slope_normalized)  # Base runoff scaled by normalized slope
             runoff_potential[burned_mask == 1] *= (1 + burn_factor_val)  # Increase in burned areas
             runoff_potential = np.clip(runoff_potential, 0, 1)  # Ensure within [0, 1]
+            st.write(f"Runoff potential max: {np.max(runoff_potential)}, min: {np.min(runoff_potential)}")
 
             # Erosion Risk Map: Higher slope and burned areas increase erosion risk
-            erosion_risk = base_erosion_rate * (1 + slope_normalized)  # Base erosion scaled by slope
+            erosion_risk = base_erosion_rate * (1 + slope_normalized)  # Base erosion scaled by normalized slope
             erosion_risk[burned_mask == 1] *= erosion_multiplier_burned  # Increase in burned areas
+            st.write(f"Erosion risk max: {np.max(erosion_risk)}, min: {np.min(erosion_risk)}")
 
             # Display statistics
             st.write(f"**Runoff from Unburned Areas:** {V_runoff_unburned:.2f} m³")
