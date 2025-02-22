@@ -15,6 +15,9 @@ from scipy.ndimage import convolve
 # Set page config for a wide layout and dark theme
 st.set_page_config(page_title="Hydrogeology & DEM Analysis", layout="wide", initial_sidebar_state="collapsed")
 
+# Set matplotlib to dark background style for dark mode compatibility
+plt.style.use('dark_background')
+
 # Dark mode CSS with logo and header styling
 st.markdown("""
     <style>
@@ -112,7 +115,7 @@ st.markdown("""
 # Header with logo and title
 st.markdown("""
     <div class="header-container">
-        <img src="https://via.placeholder.com/50" alt="Logo">
+        <img src="logo.png" alt="Logo">
         <h1>Advanced Hydrogeology & DEM Analysis</h1>
     </div>
 """, unsafe_allow_html=True)
@@ -258,7 +261,7 @@ if uploaded_stl and run_button:
     # Display in Tabs
     with tabs[0]:  # DEM & Flow Simulation
         fig, ax = plt.subplots()
-        ax.imshow(grid_z, cmap='terrain')
+        ax.imshow(grid_z, cmap='terrain', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[1]:  # Slope Map
@@ -268,7 +271,7 @@ if uploaded_stl and run_button:
             slope_cmap = st.selectbox("Colormap", ["viridis", "plasma", "inferno"], key="slope_cmap")
         st.subheader("Slope Map")
         fig, ax = plt.subplots()
-        ax.imshow(slope, cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax)
+        ax.imshow(slope, cmap=slope_cmap, vmin=slope_vmin, vmax=slope_vmax, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[2]:  # Aspect Map
@@ -278,7 +281,7 @@ if uploaded_stl and run_button:
             aspect_cmap = st.selectbox("Colormap", ["twilight", "hsv"], key="aspect_cmap")
         st.subheader("Aspect Map")
         fig, ax = plt.subplots()
-        ax.imshow(aspect, cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax)
+        ax.imshow(aspect, cmap=aspect_cmap, vmin=aspect_vmin, vmax=aspect_vmax, origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[3]:  # Retention Time
@@ -298,19 +301,19 @@ if uploaded_stl and run_button:
     with tabs[6]:  # Flow Accumulation
         st.subheader("Flow Accumulation")
         fig, ax = plt.subplots()
-        ax.imshow(flow_acc, cmap='Blues')
+        ax.imshow(flow_acc, cmap='Blues', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[7]:  # TWI
         st.subheader("Topographic Wetness Index")
         fig, ax = plt.subplots()
-        ax.imshow(twi, cmap='RdYlBu')
+        ax.imshow(twi, cmap='RdYlBu', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[8]:  # Curvature
         st.subheader("Curvature Analysis")
         fig, ax = plt.subplots()
-        ax.imshow(curvature, cmap='Spectral')
+        ax.imshow(curvature, cmap='Spectral', origin='lower', extent=(left_bound, right_bound, bottom_bound, top_bound))
         st.pyplot(fig)
 
     with tabs[9]:  # Scenario GIFs
